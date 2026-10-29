@@ -4,3 +4,4 @@ Config/Local.xcconfig
 DerivedData/
 build/
 .DS_Store
+Packages/KlarschiffCore/.swiftpm/

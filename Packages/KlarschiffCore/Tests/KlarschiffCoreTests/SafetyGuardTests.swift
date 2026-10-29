@@ -33,12 +33,14 @@ private let guardWithTemp = SafetyGuard(
         #expect(guardUnderTest.check(URL(filePath: "/private/var/folders/ab/xyz/T/old.tmp")) != .allowed)
     }
 
-    @Test(arguments: ["/Users/test", "/private/var/folders/ab/xyz", "/var/empty/x", "/Library/T", "/private/var/folders/ab/xyz/C"])
+    @Test(arguments: ["/private/var/folders/ab/xyz/C", "/private/var/folders/ab/xyz/T/sub",
+                      "/private/var/folders/ab/xyz", "/private/var/folders/ab", "/Library/T", "/var/empty/T"])
     func invalidTempDirIsIgnored(_ t: String) {
         let g = SafetyGuard(home: URL(filePath: "/Users/test"), userCacheDir: URL(filePath: "/private/var/folders/ab/xyz/C"),
                             allowedCacheSubdirs: [], userTempDir: URL(filePath: t))
-        // Ungültiger Temp-Ordner gibt nichts frei (Home-Pfade außen vor).
-        if !t.hasPrefix("/Users/test") { #expect(g.check(URL(filePath: "\(t)/x")) != .allowed, "\(t)") }
+        for p in ["\(t)/x", "/private/var/folders/ab/xyz/T/x"] {
+            #expect(g.check(URL(filePath: p)) != .allowed, "\(t) \(p)")
+        }
     }
 
     @Test func deniesSymlinkFromTempToDocuments() throws {
@@ -47,7 +49,7 @@ private let guardWithTemp = SafetyGuard(
         try t.file("home/Documents/secret.txt", bytes: 3)
         try t.symlink("evil", to: docs)
         // Fixture liegt selbst unter dem echten T/; dort das eigene T/ simulieren.
-        guard let temp = SafetyGuard.userTempDirectory() else { return }
+        let temp = try #require(SafetyGuard.userTempDirectory())
         let g = SafetyGuard(home: t.root.appending(path: "home"), userCacheDir: t.root.appending(path: "C"),
                             allowedCacheSubdirs: [], userTempDir: temp)
         #expect(g.check(t.root.appending(path: "evil")) != .allowed)

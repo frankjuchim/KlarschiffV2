@@ -116,6 +116,12 @@ public struct AdminRemover: Sendable {
         }
     }
 
+    private static func isNormalizedAbsolute(_ p: String) -> Bool {
+        guard p.hasPrefix("/"), p.count > 1, !p.hasSuffix("/") else { return false }
+        return !p.unicodeScalars.split(separator: "/", omittingEmptySubsequences: false).dropFirst()
+            .contains { $0.isEmpty || String($0) == "." || String($0) == ".." }
+    }
+
     private static let knownRmOptions: Set<String> = ["-r", "-f", "-R", "-rf", "-fr", "-Rf", "-fR"]
 
     /// BSD-`rm` beendet Optionen am ersten Nicht-Option-Argument (oder `--`); alles danach ist ein Operand.
@@ -133,6 +139,8 @@ public struct AdminRemover: Sendable {
             }
             targets += 1
             guard arg.hasPrefix("/") else { return .denied("Liegt außerhalb der erlaubten Ordner") }
+            // rm bekommt den Rohstring: nur exakt die normalisierte Form, die der Guard prüft (kein Folgen von Symlink/).
+            if !Self.isNormalizedAbsolute(arg) { return .denied("Pfad nicht eindeutig") }
             if case .denied(let r) = safety.check(URL(filePath: arg)) { return .denied(r) }
         }
         return targets == 0 ? .denied("Kein Ziel angegeben") : .allowed

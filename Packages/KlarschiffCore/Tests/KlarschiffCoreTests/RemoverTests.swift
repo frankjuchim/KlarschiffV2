@@ -186,6 +186,20 @@ private func item(_ id: String, _ url: URL?, size: Int64? = 10) -> FindingItem {
         #expect(ex.runs.count == 1)
     }
 
+    @Test(arguments: ["/Library/Caches/foo/", "/Library/Caches/foo/.", "/Library/Caches/foo/..", "/Library/Caches//foo",
+                      "/Library/Caches/./foo", "/Library/Caches/x/../foo", "/Library/Caches/foo//"])
+    func adminRmDeniesNonNormalizedOperands(_ operand: String) async throws {
+        let tree = try FixtureTree()
+        let (g, _) = makeGuard(tree)
+        for args in [["-rf", operand], ["-rf", "--", operand]] {
+            let ex = FakeExecutor(fixed: .completed([0]))
+            let fnd = finding(.admin([AdminStep(executable: "/bin/rm", arguments: args)]), items: [item("a", nil)])
+            let r = await AdminRemover(executor: ex, guard: g).remove([(fnd, fnd.items)], dryRun: false)
+            #expect(ex.runs.isEmpty, "\(args)")
+            #expect(r[0].outcome == .failed("Gesperrt: Pfad nicht eindeutig"), "\(args)")
+        }
+    }
+
     @Test func adminAllowsLogEraseAll() async throws {
         let tree = try FixtureTree()
         let (g, _) = makeGuard(tree)

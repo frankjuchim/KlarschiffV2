@@ -65,7 +65,7 @@ public struct SafetyGuard: Sendable {
         // Temp-Ordner (`DARWIN_USER_TEMP_DIR`) gleich validiert; darf nicht der Cache-Ordner sein.
         if let userTempDir,
            let t = Self.canonicalPhysical(userTempDir.path)?.map({ $0.lowercased() }),
-           t.count >= 6, t[0] == "private", t[1] == "var", t[2] == "folders", t != cacheParts {
+           t.count == 6, t[0] == "private", t[1] == "var", t[2] == "folders", t[5] == "t", t != cacheParts {
             tempParts = t
         } else {
             tempParts = nil
