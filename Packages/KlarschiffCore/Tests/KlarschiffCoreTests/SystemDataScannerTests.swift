@@ -2,6 +2,8 @@ import Testing
 import Foundation
 @testable import KlarschiffCore
 
+private func blockThread(seconds: Double) { Thread.sleep(forTimeInterval: seconds) }
+
 private let GB: Int64 = 1_000_000_000
 
 private func diskutilOK() -> FakeCommandRunner {
@@ -164,5 +166,89 @@ private func find(_ id: String, in areas: [SystemArea]) -> SystemArea? {
         let scanner = SystemDataScanner(sizeOf: sizer(tree.root, [:]), cleanupScanners: [Stub()])
         let report = await scanner.scan(.test(root: tree.root, runner: diskutilOK())) { _, _ in }
         #expect(report.cleanupFindings.count == 1)
+    }
+
+    @Test func unaccountedUpperBoundTriggers() async throws {
+        let tree = try FixtureTree()
+        let fast = Duration.milliseconds(200)
+        // sauber
+        var r = await SystemDataScanner(sizeOf: sizer(tree.root, [:])).scan(.test(root: tree.root, runner: diskutilOK())) { _, _ in }
+        #expect(!r.unaccountedIsUpperBound && !r.userDataIsLowerBound)
+        #expect(!r.failures.contains { $0.scannerID == "systemdata.unaccounted" })
+        // Home unvollständig
+        let home = tree.root.appending(path: "home").path.dropFirst(tree.root.path.count)
+        r = await SystemDataScanner(sizeOf: sizer(tree.root, [:], incomplete: [String(home)])).scan(.test(root: tree.root, runner: diskutilOK())) { _, _ in }
+        #expect(r.userDataIsLowerBound && r.unaccountedIsUpperBound)
+        #expect(r.failures.contains { $0.scannerID == "systemdata.unaccounted" })
+        // /Applications Timeout
+        r = await SystemDataScanner(areaTimeout: fast, sizeOf: sizer(tree.root, [:], hang: ["/Applications"])).scan(.test(root: tree.root, runner: diskutilOK())) { _, _ in }
+        #expect(r.userDataIsLowerBound && r.unaccountedIsUpperBound)
+        // Bereich unvollständig
+        r = await SystemDataScanner(sizeOf: sizer(tree.root, [:], incomplete: ["/opt"])).scan(.test(root: tree.root, runner: diskutilOK())) { _, _ in }
+        #expect(!r.userDataIsLowerBound && r.unaccountedIsUpperBound)
+        // Bereich Timeout
+        r = await SystemDataScanner(areaTimeout: fast, sizeOf: sizer(tree.root, [:], hang: ["/opt"])).scan(.test(root: tree.root, runner: diskutilOK())) { _, _ in }
+        #expect(r.unaccountedIsUpperBound)
+    }
+
+    @Test func restOmittedWhenNamedChildMissing() async throws {
+        let tree = try FixtureTree()
+        let scanner = SystemDataScanner(areaTimeout: .milliseconds(200), sizeOf: sizer(tree.root, ["/Library": 10 * GB, "/Library/Logs": 1 * GB], hang: ["/Library/Caches"]))
+        let r = await scanner.scan(.test(root: tree.root, runner: diskutilOK())) { _, _ in }
+        #expect(find("library.caches", in: r.areas)?.size == nil)
+        #expect(find("library.other", in: r.areas) == nil)
+        #expect(find("library", in: r.areas)?.size == 10 * GB)
+    }
+
+    @Test func restLowerBoundOnlyFromParent() async throws {
+        let tree = try FixtureTree()
+        let scanner = SystemDataScanner(sizeOf: sizer(tree.root, ["/Library": 10 * GB, "/Library/Caches": 3 * GB], incomplete: ["/Library/Caches"]))
+        let r = await scanner.scan(.test(root: tree.root, runner: diskutilOK())) { _, _ in }
+        #expect(find("library.other", in: r.areas)?.isLowerBound == false)
+        #expect(find("library", in: r.areas)?.isLowerBound == true)
+    }
+
+    @Test func timedOutParentUsesChildrenSum() async throws {
+        let tree = try FixtureTree()
+        let scanner = SystemDataScanner(areaTimeout: .milliseconds(200), sizeOf: sizer(tree.root, ["/Library/Caches": 3 * GB, "/Library/Logs": 1 * GB], hang: ["/Library"]))
+        let r = await scanner.scan(.test(root: tree.root, runner: diskutilOK())) { _, _ in }
+        let lib = try #require(find("library", in: r.areas))
+        #expect(lib.size == 4 * GB && lib.isLowerBound)
+        #expect(find("library.other", in: r.areas) == nil)
+        #expect(r.systemAreasTotal == 4 * GB)
+        #expect(r.failures.contains { $0.scannerID == "systemdata.library" })
+    }
+
+    @Test func inventoryWithoutDataVolumeGivesHint() async throws {
+        let tree = try FixtureTree()
+        let fake = FakeCommandRunner()
+        let plist = try String(contentsOf: Bundle.module.resourceURL!.appending(path: "Fixtures/diskutil-apfs-list.plist"), encoding: .utf8)
+            .replacingOccurrences(of: "<string>Data</string>", with: "<string>Other</string>")
+        fake.stub("/usr/sbin/diskutil", ["apfs", "list", "-plist"], result: CommandResult(exitCode: 0, stdout: plist, stderr: ""))
+        let r = await SystemDataScanner(sizeOf: sizer(tree.root, [:])).scan(.test(root: tree.root, runner: fake)) { _, _ in }
+        // ohne Data-Rolle schlägt parse mit noStartContainer fehl -> inventory nil, Hinweis vorhanden
+        #expect(r.unaccounted == 0)
+        #expect(r.failures.contains { $0.scannerID == "systemdata.volumes" })
+    }
+
+    @Test func unreadableGlobLevelMarksLowerBound() async throws {
+        let tree = try FixtureTree()
+        let locked = try tree.dir("private/var/folders/aa")
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: locked.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path) }
+        let r = await SystemDataScanner(sizeOf: sizer(tree.root, [:])).scan(.test(root: tree.root, runner: diskutilOK())) { _, _ in }
+        #expect(find("var.folders.caches", in: r.areas)?.isLowerBound == true)
+        #expect(find("var.folders", in: r.areas)?.isLowerBound == true)
+    }
+
+    @Test func deadlineFiresEvenIfOperationIgnoresCancellation() async throws {
+        let start = ContinuousClock.now
+        let result = await Deadline.run(.milliseconds(200)) { () async throws -> Int in
+            // kooperationslos: blockiert den Thread ohne Cancellation-Prüfung
+            blockThread(seconds: 3)
+            return 1
+        }
+        guard case .failure(.timeout) = result else { Issue.record("kein Timeout"); return }
+        #expect(ContinuousClock.now - start < .seconds(2))
     }
 }

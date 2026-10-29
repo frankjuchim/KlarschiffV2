@@ -35,7 +35,11 @@ public struct SizeMeter: Sendable {
     private static func measureTree(_ root: URL) throws -> (size: Int64, complete: Bool) {
         let fm = FileManager.default
         // lstat-artig prüfen, ohne Symlinks zu folgen; fehlender Pfad -> 0.
-        guard let attrs = try? fm.attributesOfItem(atPath: root.path) else { return (0, true) }
+        let attrs: [FileAttributeKey: Any]
+        do { attrs = try fm.attributesOfItem(atPath: root.path) } catch {
+            // Fehlender Pfad: exakt 0; andere Fehler (z. B. gesperrt): unvollständig.
+            return (0, (error as NSError).code == NSFileReadNoSuchFileError)
+        }
         var seen = Set<AnyHashable>()
         var total: Int64 = 0
         let type = attrs[.type] as? FileAttributeType

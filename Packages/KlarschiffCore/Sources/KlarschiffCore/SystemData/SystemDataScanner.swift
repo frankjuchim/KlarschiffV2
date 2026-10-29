@@ -17,7 +17,7 @@ public struct SystemDataScanner: Sendable {
 
     private enum Unit: Sendable {
         case area(index: Int, SystemArea, [ScanFailure])
-        case userData(Int64, [ScanFailure])
+        case userData(Int64, Bool, [ScanFailure])
         case inventory(VolumeInventoryResult?, [ScanFailure])
         case snapshots([Finding], [ScanFailure])
         case cleanup([Finding], [ScanFailure])
@@ -32,6 +32,7 @@ public struct SystemDataScanner: Sendable {
 
         var areaSlots = [SystemArea?](repeating: nil, count: definitions.count)
         var userData: Int64 = 0
+        var userDataLower = false
         var inventory: VolumeInventoryResult?
         var snapshotFindings: [Finding] = []
         var cleanupFindings: [Finding] = []
@@ -49,12 +50,14 @@ public struct SystemDataScanner: Sendable {
             group.addTask {
                 var f: [ScanFailure] = []
                 var sum: Int64 = 0
+                var lower = false
                 for (id, url) in [("home", ctx.home), ("applications", ctx.absolute("/Applications"))] {
                     let r = await measure.single(url, id: "userdata.\(id)")
                     if let s = r.size { sum += s }
+                    if r.size == nil || !r.complete { lower = true }
                     f += r.failures
                 }
-                return .userData(sum, f)
+                return .userData(sum, lower, f)
             }
             group.addTask {
                 do {
@@ -76,7 +79,7 @@ public struct SystemDataScanner: Sendable {
             for await unit in group {
                 switch unit {
                 case .area(let i, let a, let f): areaSlots[i] = a; failures += f
-                case .userData(let s, let f): userData = s; failures += f
+                case .userData(let s, let l, let f): userData = s; userDataLower = l; failures += f
                 case .inventory(let inv, let f): inventory = inv; failures += f
                 case .snapshots(let fs, let f): snapshotFindings = fs; failures += f
                 case .cleanup(let fs, let f): cleanupFindings = fs; failures += f
@@ -91,10 +94,18 @@ public struct SystemDataScanner: Sendable {
         var unaccounted: Int64 = 0
         if let data = inventory?.volumes.first(where: { $0.role == .data }) {
             unaccounted = max(0, data.consumed - userData - systemTotal)
+        } else if inventory != nil {
+            failures.append(ScanFailure(scannerID: "systemdata.volumes",
+                message: "Das Daten-Volume wurde nicht gefunden. Der nicht zugeordnete Anteil bleibt unbekannt."))
+        }
+        let upperBound = userDataLower || areas.contains { $0.size == nil || $0.isLowerBound }
+        if upperBound {
+            failures.append(ScanFailure(scannerID: "systemdata.unaccounted",
+                message: "Einige Bereiche konnten nicht vollständig gemessen werden – „nicht zugeordnet“ ist daher eher zu hoch."))
         }
         return SystemDataReport(
-            measuredAt: ctx.now, inventory: inventory, areas: areas, userData: userData,
-            systemAreasTotal: systemTotal, unaccounted: unaccounted,
+            measuredAt: ctx.now, inventory: inventory, areas: areas, userData: userData, userDataIsLowerBound: userDataLower,
+            systemAreasTotal: systemTotal, unaccounted: unaccounted, unaccountedIsUpperBound: upperBound,
             snapshotFindings: snapshotFindings, cleanupFindings: cleanupFindings, failures: failures)
     }
 }
@@ -126,16 +137,20 @@ private struct Measurer: Sendable {
             }
             children = slots.compactMap { $0 }
         }
-        let (size, ownLower, ownFailures) = await own
+        var (size, ownLower, ownFailures) = await own
         failures += ownFailures
 
-        if let restTitle = def.restTitle, let size {
+        if size == nil, children.contains(where: { $0.size != nil }) {
+            // Eigene Messung fehlt, Kinder sind bekannt: Summe der Kinder als Untergrenze.
+            size = children.reduce(Int64(0)) { $0 + ($1.size ?? 0) }
+        }
+        if let restTitle = def.restTitle, let size, ownFailures.isEmpty, !children.contains(where: { $0.size == nil }) {
             let named = children.reduce(Int64(0)) { $0 + ($1.size ?? 0) }
             children.append(SystemArea(
                 id: "\(def.id).other", url: url, title: restTitle,
                 summary: "Alles in „\(def.title)“, was nicht zu den Bereichen darüber gehört.",
                 verdict: .keep, size: max(0, size - named),
-                isLowerBound: ownLower || children.contains { $0.isLowerBound }))
+                isLowerBound: ownLower))
         }
 
         var verdict = def.verdict
@@ -171,11 +186,11 @@ private struct Measurer: Sendable {
         }
     }
 
-    func single(_ url: URL, id: String) async -> (size: Int64?, failures: [ScanFailure]) {
+    func single(_ url: URL, id: String) async -> (size: Int64?, complete: Bool, failures: [ScanFailure]) {
         let sizeOf = sizeOf
         switch await Deadline.run(timeout, { try await sizeOf(url) }) {
-        case .success(let r): return (r.size, [])
-        case .failure(let e): return (nil, [e.failure(id: "systemdata.\(id)")])
+        case .success(let r): return (r.size, r.complete, [])
+        case .failure(let e): return (nil, false, [e.failure(id: "systemdata.\(id)")])
         }
     }
 
@@ -244,7 +259,7 @@ private struct Measurer: Sendable {
 
 // MARK: - Timeout
 
-private enum DeadlineError: Error, Sendable {
+enum DeadlineError: Error, Sendable {
     case timeout(Duration)
     case cancelled
     case failed(String)
@@ -262,8 +277,8 @@ private enum DeadlineError: Error, Sendable {
 }
 
 /// Führt `op` mit Frist aus; kehrt nach Ablauf oder Abbruch auch zurück, wenn `op` Cancellation ignoriert.
-private enum Deadline {
-    private final class Gate<T: Sendable>: Sendable {
+enum Deadline {
+    fileprivate final class Gate<T: Sendable>: Sendable {
         typealias R = Result<T, DeadlineError>
         private struct State {
             var cont: CheckedContinuation<R, Never>?

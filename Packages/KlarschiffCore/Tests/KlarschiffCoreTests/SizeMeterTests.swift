@@ -64,3 +64,17 @@ struct SizeMeterTests {
         #expect(!r.complete)
     }
 }
+
+@Suite struct SizeMeterDeniedTests {
+    @Test func unreadableParentIsIncompleteNotExactZero() async throws {
+        let tree = try FixtureTree()
+        try tree.file("a/b/f", bytes: 100)
+        let a = tree.root.appending(path: "a")
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: a.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: a.path) }
+        let r = try await SizeMeter().measure(a.appending(path: "b"))
+        #expect(!r.complete)
+        let missing = try await SizeMeter().measure(tree.root.appending(path: "nope"))
+        #expect(missing.complete && missing.size == 0)
+    }
+}
