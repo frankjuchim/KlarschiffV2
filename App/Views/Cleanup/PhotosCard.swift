@@ -15,7 +15,7 @@ struct PhotosCard: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Fotos-Mediathek")
                     .font(.title3.weight(.bold))
-                Text("Klarschiff löscht keine Fotos. Mit ‚Mac-Speicher optimieren‘ lagert Fotos Originale in iCloud aus – aber erst, wenn der Speicher knapp wird. Ob alles hochgeladen ist, steht unten in der Mediathek.")
+                Text("Klarschiff 2 löscht keine Fotos. Mit ‚Mac-Speicher optimieren‘ lagert Fotos Originale in iCloud aus – aber erst, wenn der Speicher knapp wird. Ob alles hochgeladen ist, steht unten in der Mediathek.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Button {

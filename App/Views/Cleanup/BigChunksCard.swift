@@ -13,7 +13,7 @@ struct BigChunksCard: View {
             Label("Große Brocken", systemImage: "chart.bar.fill")
                 .font(.title3.weight(.bold))
                 .accessibilityAddTraits(.isHeader)
-            Text("Ordner über 1 GB. Klarschiff löscht hier nur, was oben gelistet ist – den Rest räumst du am besten in der jeweiligen App auf oder deinstallierst die App.")
+            Text("Ordner über 1 GB. Klarschiff 2 löscht hier nur, was oben gelistet ist – den Rest räumst du am besten in der jeweiligen App auf oder deinstallierst die App.")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             LazyVStack(alignment: .leading, spacing: 10) {

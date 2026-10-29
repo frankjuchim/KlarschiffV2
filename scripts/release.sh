@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Baut, signiert, notarisiert und verpackt Klarschiff als DMG.
+# Baut, signiert, notarisiert und verpackt Klarschiff 2 als DMG.
 # Voraussetzungen: Config/Local.xcconfig mit DEVELOPMENT_TEAM und das Keychain-Profil
 # "klarschiff-notary" (siehe README.md).
 set -euo pipefail
@@ -7,10 +7,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
 BUILD="$ROOT/build"
-ARCHIVE="$BUILD/Klarschiff.xcarchive"
+ARCHIVE="$BUILD/Klarschiff-2.xcarchive"
 EXPORT="$BUILD/export"
-APP="$EXPORT/Klarschiff.app"
-ZIP="$BUILD/Klarschiff-notarize.zip"
+APP="$EXPORT/Klarschiff 2.app"
+ZIP="$BUILD/Klarschiff-2-notarize.zip"
 
 xcodegen generate
 
@@ -20,7 +20,7 @@ if [[ -z "$VERSION" ]]; then
   echo "MARKETING_VERSION konnte nicht ermittelt werden." >&2
   exit 1
 fi
-DMG="$BUILD/Klarschiff-$VERSION.dmg"
+DMG="$BUILD/Klarschiff-2-$VERSION.dmg"
 
 rm -rf "$ARCHIVE" "$EXPORT" "$ZIP" "$DMG"
 mkdir -p "$BUILD"
@@ -41,6 +41,6 @@ ditto -c -k --keepParent "$APP" "$ZIP"
 xcrun notarytool submit "$ZIP" --keychain-profile klarschiff-notary --wait
 xcrun stapler staple "$APP"
 
-hdiutil create -volname "Klarschiff" -srcfolder "$APP" -ov -format UDZO "$DMG"
+hdiutil create -volname "Klarschiff 2" -srcfolder "$APP" -ov -format UDZO "$DMG"
 
 echo "Fertig: $DMG"

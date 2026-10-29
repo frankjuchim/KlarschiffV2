@@ -13,12 +13,12 @@ struct KlarschiffApp: App {
     @State private var model: AppModel? = KlarschiffApp.isTestHost ? nil : AppModel(dependencies: .live())
 
     var body: some Scene {
-        Window("Klarschiff", id: "main") {
+        Window("Klarschiff 2", id: "main") {
             Group {
                 if let model {
                     RootView(model: model)
                 } else {
-                    Text("Klarschiff (Test-Host)")
+                    Text("Klarschiff 2 (Test-Host)")
                 }
             }
             .frame(minWidth: 1000, minHeight: 720)

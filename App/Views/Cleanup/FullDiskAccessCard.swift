@@ -11,9 +11,9 @@ struct FullDiskAccessCard: View {
                 .foregroundStyle(Theme.accentGradient)
                 .frame(width: 44)
             VStack(alignment: .leading, spacing: 8) {
-                Text("Klarschiff braucht Vollzugriff auf die Festplatte")
+                Text("Klarschiff 2 braucht Vollzugriff auf die Festplatte")
                     .font(.title3.weight(.bold))
-                Text("Sonst bleiben Backups, Mail-Anhänge, Container-Caches und der Papierkorb unsichtbar. Klarschiff liest nur, gelöscht wird nur, was du auswählst.")
+                Text("Sonst bleiben Backups, Mail-Anhänge, Container-Caches und der Papierkorb unsichtbar. Klarschiff 2 liest nur, gelöscht wird nur, was du auswählst.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Button {

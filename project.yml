@@ -24,13 +24,15 @@ targets:
         product: KlarschiffCore
     settings:
       base:
-        PRODUCT_NAME: Klarschiff
+        # Anzeigename „Klarschiff 2“ (Dock, Menüleiste, Finder: Klarschiff 2.app); Modulname bleibt `Klarschiff`.
+        PRODUCT_NAME: "Klarschiff 2"
+        PRODUCT_MODULE_NAME: Klarschiff
         PRODUCT_BUNDLE_IDENTIFIER: de.frankjuchim.klarschiff2
         ENABLE_HARDENED_RUNTIME: YES
         CODE_SIGN_ENTITLEMENTS: App/Klarschiff.entitlements
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: Klarschiff
+        INFOPLIST_KEY_CFBundleDisplayName: "Klarschiff 2"
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
@@ -45,7 +47,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: de.frankjuchim.klarschiff2.tests
         GENERATE_INFOPLIST_FILE: YES
-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Klarschiff.app/Contents/MacOS/Klarschiff"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Klarschiff 2.app/Contents/MacOS/Klarschiff 2"
         BUNDLE_LOADER: "$(TEST_HOST)"
 schemes:
   Klarschiff:

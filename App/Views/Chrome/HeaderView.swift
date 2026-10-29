@@ -7,7 +7,7 @@ struct HeaderView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .center, spacing: 12) {
-                Text("Klarschiff")
+                Text("Klarschiff 2")
                     .font(.system(size: 44, weight: .heavy, design: .rounded))
                     .foregroundStyle(LinearGradient(
                         colors: [Theme.turquoise, Theme.violet], startPoint: .leading, endPoint: .trailing))

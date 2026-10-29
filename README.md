@@ -9,6 +9,9 @@ Trockenlauf zum Ausprobieren.
 - `Packages/KlarschiffCore` – Scanner, Katalog, Entfernen, Sicherheitslogik (Swift Package)
 - `App` – SwiftUI-App; das Xcode-Projekt wird aus `project.yml` erzeugt
 
+Die gebaute App heißt `Klarschiff 2.app` (Anzeigename „Klarschiff 2“, Bundle-ID `de.frankjuchim.klarschiff2`);
+Target, Scheme und Swift-Modul heißen weiter `Klarschiff`.
+
 ## Bauen
 
 ```sh
@@ -58,4 +61,4 @@ scripts/release.sh
 ```
 
 Das Skript erzeugt das Projekt, archiviert, exportiert (Developer ID), notarisiert, heftet das Ticket an und
-legt `build/Klarschiff-<Version>.dmg` ab. Die Version stammt aus `MARKETING_VERSION` in `project.yml`.
+legt `build/Klarschiff-2-<Version>.dmg` (darin `Klarschiff 2.app`) ab. Die Version stammt aus `MARKETING_VERSION` in `project.yml`.
