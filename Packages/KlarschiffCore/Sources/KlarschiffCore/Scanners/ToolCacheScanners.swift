@@ -131,10 +131,11 @@ public struct OllamaScanner: Scanner {
             return []
         }
         let size = try? await ctx.sizer.size(of: dir)
-        let blocking = ctx.runningApps.running([
+        let watched = [
             AppRef(bundleID: "com.electron.ollama", processName: nil, displayName: "Ollama"),
             AppRef(bundleID: nil, processName: "ollama", displayName: "ollama"),
-        ])
+        ]
+        let blocking = ctx.runningApps.running(watched)
         return [Finding(
             id: FindingID(scannerID: id, key: "models"), category: .aiLeftovers,
             title: "Ollama-Modelle",
@@ -142,7 +143,8 @@ public struct OllamaScanner: Scanner {
             risk: .review, method: .delete,
             items: [FindingItem(id: dir.path, url: dir, name: "models", size: size)],
             size: size, blockingApps: blocking, keepSuggested: false,
-            commandPreview: ["rm -rf " + ShellQuote.quote(dir.path)], needsFullDiskAccess: false)]
+            commandPreview: ["rm -rf " + ShellQuote.quote(dir.path)], needsFullDiskAccess: false,
+            watchedApps: watched)]
     }
 }
 

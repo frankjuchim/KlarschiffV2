@@ -56,6 +56,8 @@ public struct Finding: Identifiable, Sendable {
     public let items: [FindingItem]
     public let size: Int64?
     public let blockingApps: [AppRef]
+    /// Alle Apps, die diesen Fund blockieren könnten (auch solche, die erst später starten).
+    public let watchedApps: [AppRef]
     public let keepSuggested: Bool
     public let commandPreview: [String]
     public let needsFullDiskAccess: Bool
@@ -63,7 +65,8 @@ public struct Finding: Identifiable, Sendable {
     public init(
         id: FindingID, category: Category, title: String, summary: String, risk: Risk,
         method: RemovalMethod, items: [FindingItem], size: Int64?, blockingApps: [AppRef],
-        keepSuggested: Bool, commandPreview: [String], needsFullDiskAccess: Bool
+        keepSuggested: Bool, commandPreview: [String], needsFullDiskAccess: Bool,
+        watchedApps: [AppRef] = []
     ) {
         self.id = id
         self.category = category
@@ -74,6 +77,7 @@ public struct Finding: Identifiable, Sendable {
         self.items = items
         self.size = size
         self.blockingApps = blockingApps
+        self.watchedApps = watchedApps
         self.keepSuggested = keepSuggested
         self.commandPreview = commandPreview
         self.needsFullDiskAccess = needsFullDiskAccess

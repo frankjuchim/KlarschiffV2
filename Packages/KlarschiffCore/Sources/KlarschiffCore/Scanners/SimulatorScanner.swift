@@ -63,7 +63,8 @@ public struct SimulatorRuntimeScanner: Scanner {
                 items: [FindingItem(id: r.identifier, name: title, size: r.sizeBytes, detail: r.build.map { "Build \($0)" })],
                 size: r.sizeBytes, blockingApps: blocking,
                 keepSuggested: newest[platform]?.identifier == r.identifier,
-                commandPreview: [cmd.display], needsFullDiskAccess: false)
+                commandPreview: [cmd.display], needsFullDiskAccess: false,
+                watchedApps: simulatorApp)
         }
     }
 }
@@ -102,6 +103,7 @@ public struct UnavailableSimulatorsScanner: Scanner {
             summary: "Simulatoren, deren Runtime nicht mehr installiert ist. Sie lassen sich nicht mehr starten und belegen nur Platz.",
             risk: .safe, method: .tool([cmd], fallback: nil), items: items,
             size: items.compactMap(\.size).reduce(0, +), blockingApps: ctx.runningApps.running(simulatorApp),
-            keepSuggested: false, commandPreview: [cmd.display], needsFullDiskAccess: false)]
+            keepSuggested: false, commandPreview: [cmd.display], needsFullDiskAccess: false,
+            watchedApps: simulatorApp)]
     }
 }

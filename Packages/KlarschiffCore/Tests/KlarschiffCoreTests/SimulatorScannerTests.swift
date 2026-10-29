@@ -45,6 +45,7 @@ import Foundation
         #expect(!f.keepSuggested)
         let idle = try await SimulatorRuntimeScanner().scan(.test(runner: fakeWithRuntimes()))
         #expect(idle.allSatisfy { $0.blockingApps.isEmpty })
+        #expect(idle.allSatisfy { $0.watchedApps.map(\.displayName) == ["Simulator"] })
     }
 
     @Test func noXcodeNoRuntimes() async throws {

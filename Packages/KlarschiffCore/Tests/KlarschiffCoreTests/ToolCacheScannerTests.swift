@@ -51,6 +51,7 @@ import Foundation
         let f = try #require(fs.first)
         #expect(f.id.key == "models" && f.method == .delete)
         #expect(f.blockingApps.map(\.displayName) == ["Ollama"])
+        #expect(f.watchedApps.map(\.displayName) == ["Ollama", "ollama"])
     }
 
     @Test func ollamaServerDownWithoutFolderThrows() async throws {

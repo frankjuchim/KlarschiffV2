@@ -85,7 +85,8 @@ public struct PathScanner: Scanner {
             id: FindingID(scannerID: rule.id, key: key), category: rule.category, title: title,
             summary: rule.summary, risk: risk, method: method, items: items, size: size,
             blockingApps: blocking, keepSuggested: false,
-            commandPreview: Self.preview(method, items: items), needsFullDiskAccess: needsFullDiskAccess)
+            commandPreview: Self.preview(method, items: items), needsFullDiskAccess: needsFullDiskAccess,
+            watchedApps: rule.blockingApps)
     }
 
     /// Werkzeug fehlt → Fallback (ohne Fallback: Hinweis). Hinweise ohne Aktion zeigen den ersten Eintrag im Finder.

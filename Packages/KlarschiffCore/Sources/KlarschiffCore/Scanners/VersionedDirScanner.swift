@@ -82,7 +82,8 @@ public struct VersionedDirScanner: Scanner {
                 title: titleFor?(child.parentName, name) ?? "\(titlePrefix) \(name)",
                 summary: summary, risk: risk, method: method, items: [item], size: size,
                 blockingApps: blocking, keepSuggested: newest[groups[i]] == i,
-                commandPreview: PathScanner.preview(method, items: [item]), needsFullDiskAccess: false))
+                commandPreview: PathScanner.preview(method, items: [item]), needsFullDiskAccess: false,
+                watchedApps: blockingApps))
         }
         return findings
     }

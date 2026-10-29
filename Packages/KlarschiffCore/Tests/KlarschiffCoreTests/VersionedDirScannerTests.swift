@@ -27,6 +27,7 @@ import Foundation
         #expect(f.commandPreview == ["In den Papierkorb: \(f.items[0].url!.path)"])
         #expect((f.size ?? 0) >= 2000)
         #expect(f.blockingApps.map(\.displayName).contains("Xcode"))
+        #expect(f.watchedApps.map(\.displayName).contains("Xcode"))
         #expect(fs.first { $0.title.hasPrefix("watchOS-Gerätesupport") } != nil)
     }
 

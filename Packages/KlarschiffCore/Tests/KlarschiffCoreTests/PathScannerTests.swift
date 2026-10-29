@@ -19,6 +19,7 @@ struct PathScannerTests {
         let t = try FixtureTree(); try t.file("C/com.apple.dt.Instruments/a", bytes: 1000); try t.file("C/com.apple.dt.InstrumentsCLI/b", bytes: 1000)
         let f = try await PathScanner(rule: Catalog.rule("xcode.instruments")).scan(.test(root: t.root, running: ["com.apple.dt.Xcode"])).first!
         #expect(f.items.count == 2); #expect(f.blockingApps.map(\.displayName) == ["Xcode"])
+        #expect(f.watchedApps.map(\.displayName).contains("Xcode"))
     }
 
     @Test func missingPathsYieldNothing() async throws {
