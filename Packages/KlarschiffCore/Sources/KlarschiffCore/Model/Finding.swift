@@ -29,14 +29,20 @@ public struct FindingItem: Hashable, Codable, Sendable, Identifiable {
     public var size: Int64?
     public var date: Date?
     public var detail: String?
+    /// Laufende App, die genau dieses Item blockiert (Item-Ebene; der Fund bleibt vorauswählbar).
+    public var blockingApp: AppRef?
 
-    public init(id: String, url: URL? = nil, name: String, size: Int64? = nil, date: Date? = nil, detail: String? = nil) {
+    public init(
+        id: String, url: URL? = nil, name: String, size: Int64? = nil, date: Date? = nil, detail: String? = nil,
+        blockingApp: AppRef? = nil
+    ) {
         self.id = id
         self.url = url
         self.name = name
         self.size = size
         self.date = date
         self.detail = detail
+        self.blockingApp = blockingApp
     }
 }
 

@@ -8,7 +8,8 @@ public enum Catalog {
             CondaScanner(), OllamaScanner(), RustupScanner(),
             VersionedDirScanner.deviceSupport, VersionedDirScanner.nvm, VersionedDirScanner.pyenv, VersionedDirScanner.rbenv,
             TeXLiveScanner(), MobileBackupScanner(), OldInstallerScanner(), MessagesAttachmentsScanner(),
-            UnusedAppsScanner(), LeftoverAppDataScanner(), ExtraXcodeScanner()]
+            UnusedAppsScanner(), LeftoverAppDataScanner(), ExtraXcodeScanner(),
+            AppStoreCachesScanner(), OtherCachesScanner()]
     }
 
     /// Regel zu einer ID (für Tests und Neu-Scans einzelner Regeln). Unbekannte ID ist ein Programmierfehler.
