@@ -64,9 +64,57 @@ struct PathScannerTests {
     @Test func toolWithoutFallbackBecomesHint() async throws {
         let t = try FixtureTree(); try t.file("home/Library/pnpm/store/v3/x", bytes: 1000)
         let f = try #require(try await PathScanner(rule: Catalog.rule("languages.pnpm")).scan(.test(root: t.root)).first)
-        #expect(f.method == .hint(nil))
-        #expect(f.risk == Catalog.rule("languages.pnpm").risk)
+        #expect(f.method == .hint(.revealInFinder(t.root.appending(path: "home/Library/pnpm/store"))))
+        #expect(f.risk == .hintOnly)
+        #expect(!f.isPreselected(isKept: false))
         #expect(f.commandPreview.isEmpty)
+    }
+
+    @Test func androidAvdBundlesIniCompanion() async throws {
+        let t = try FixtureTree()
+        try t.file("home/.android/avd/Pixel.avd/userdata.img", bytes: 8000)
+        try t.file("home/.android/avd/Pixel.ini", bytes: 100)
+        try t.file("home/.android/avd/Orphan.ini", bytes: 100)
+        let fs = try await PathScanner(rule: Catalog.rule("languages.androidAvd")).scan(.test(root: t.root))
+        #expect(fs.count == 1)
+        let f = try #require(fs.first)
+        #expect(f.items.map(\.name) == ["Pixel.avd", "Pixel.ini"])
+        #expect(f.title == "Android-Emulator: Pixel")
+        #expect(f.size == f.items.compactMap(\.size).reduce(0, +))
+        #expect(f.commandPreview.count == 2)
+    }
+
+    @Test func avdWithoutIniHasSingleItem() async throws {
+        let t = try FixtureTree(); try t.file("home/.android/avd/Tab.avd/x", bytes: 1000)
+        let f = try #require(try await PathScanner(rule: Catalog.rule("languages.androidAvd")).scan(.test(root: t.root)).first)
+        #expect(f.items.map(\.name) == ["Tab.avd"])
+    }
+
+    @Test func rubyGemsNeverIncludeCredentials() async throws {
+        let t = try FixtureTree()
+        try t.file("home/.gem/credentials", bytes: 100)
+        try t.file("home/.gem/specs/api.rubygems.org/x", bytes: 1000)
+        try t.file("home/.gem/ruby/3.3.0/gems/x", bytes: 1000)
+        let fs = try await PathScanner(rule: Catalog.rule("languages.ruby")).scan(.test(root: t.root))
+        let names = fs.flatMap(\.items).map(\.name)
+        #expect(Set(names) == ["specs", "ruby"])
+        #expect(!fs.flatMap(\.items).contains { $0.id.contains("credentials") })
+        #expect(fs.flatMap(\.commandPreview).allSatisfy { !$0.contains("credentials") })
+    }
+
+    @Test func swiftpmOnlyCacheNotConfiguration() async throws {
+        let t = try FixtureTree()
+        try t.file("home/.swiftpm/cache/x", bytes: 1000)
+        try t.file("home/.swiftpm/configuration/mirrors.json", bytes: 100)
+        try t.file("home/.swiftpm/security/fingerprints/x", bytes: 100)
+        let f = try #require(try await PathScanner(rule: Catalog.rule("languages.swiftpm")).scan(.test(root: t.root)).first)
+        #expect(f.items.map(\.name) == ["cache"])
+    }
+
+    @Test func perMatchTitleWithoutExtension() async throws {
+        let t = try FixtureTree(); try t.file("home/Parallels/Windows 11.pvm/disk", bytes: 1000)
+        let f = try #require(try await PathScanner(rule: Catalog.rule("toolchains.parallels")).scan(.test(root: t.root)).first)
+        #expect(f.title == "Parallels-VM: Windows 11")
     }
 
     @Test func codexOnlyWhitelistedSubfolders() async throws {

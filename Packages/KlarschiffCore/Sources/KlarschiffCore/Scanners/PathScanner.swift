@@ -43,12 +43,18 @@ public struct PathScanner: Scanner {
             }
             guard !targets.isEmpty else { continue }
             let sizes = try await ctx.sizer.sizes(of: targets)
-            let items = targets.compactMap { url -> FindingItem? in
+            var items = targets.compactMap { url -> FindingItem? in
                 let size = sizes[url] ?? 0
                 guard size >= rule.minSize else { return nil }
                 return FindingItem(id: url.path, url: url, name: url.lastPathComponent, size: size)
             }
-            if !items.isEmpty { groups.append((match, items)) }
+            guard !items.isEmpty else { continue }
+            // Begleitdateien gehören zum Treffer und zählen unabhängig von `minSize` mit.
+            for companion in companions(of: match) where seen.insert(companion.path).inserted {
+                let size = try await ctx.sizer.size(of: companion)
+                items.append(FindingItem(id: companion.path, url: companion, name: companion.lastPathComponent, size: size))
+            }
+            groups.append((match, items))
         }
 
         switch rule.grouping {
@@ -72,27 +78,42 @@ public struct PathScanner: Scanner {
         ctx: ScanContext, needsFullDiskAccess: Bool = false
     ) -> Finding {
         let method = effectiveMethod(ctx, firstURL: items.first?.url)
+        // Ein Hinweis ist nie entfernbar und darf daher nie vorausgewählt sein.
+        let risk: Risk
+        if case .hint = method { risk = .hintOnly } else { risk = rule.risk }
         return Finding(
             id: FindingID(scannerID: rule.id, key: key), category: rule.category, title: title,
-            summary: rule.summary, risk: rule.risk, method: method, items: items, size: size,
+            summary: rule.summary, risk: risk, method: method, items: items, size: size,
             blockingApps: blocking, keepSuggested: false,
             commandPreview: Self.preview(method, items: items), needsFullDiskAccess: needsFullDiskAccess)
     }
 
-    /// Werkzeug fehlt → Fallback (ohne Fallback: Hinweis). Hinweis-Regeln zeigen den ersten Eintrag im Finder.
+    /// Werkzeug fehlt → Fallback (ohne Fallback: Hinweis). Hinweise ohne Aktion zeigen den ersten Eintrag im Finder.
     private func effectiveMethod(_ ctx: ScanContext, firstURL: URL?) -> RemovalMethod {
+        let reveal: RemovalMethod = firstURL.map { .hint(.revealInFinder($0)) } ?? .hint(nil)
         switch rule.method {
         case .tool(let commands, let fallback):
             if commands.allSatisfy({ ctx.tools.path(for: $0.tool) != nil }) { return rule.method }
             switch fallback {
             case .delete: return .delete
             case .trash: return .trash
-            case nil: return .hint(nil)
+            case nil: return reveal
             }
         case .hint(nil):
-            return firstURL.map { .hint(.revealInFinder($0)) } ?? .hint(nil)
+            return reveal
         default:
             return rule.method
+        }
+    }
+
+    /// Vorhandene Begleitdateien `<stem>.<ext>` neben dem Treffer (ohne Symlinks).
+    private func companions(of match: URL) -> [URL] {
+        let stem = match.deletingPathExtension().lastPathComponent
+        let dir = match.deletingLastPathComponent()
+        return rule.companionExtensions.compactMap { ext in
+            let url = dir.appending(path: "\(stem).\(ext)")
+            guard url.path != match.path, let type = Self.entryType(url), type != .typeSymbolicLink else { return nil }
+            return url
         }
     }
 

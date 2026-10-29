@@ -47,12 +47,16 @@ public struct PathRule: Sendable {
     /// Namen, die beim Auflösen und bei der Rekursion übersprungen werden.
     public var excludeNames: Set<String>
     public var matchName: MatchName
+    /// Begleitdateien: zu jedem Treffer `<name ohne Endung>.<ext>` im selben Ordner, falls vorhanden,
+    /// als weiterer Eintrag desselben Funds (z. B. die `.ini` neben einem Android-`.avd`-Ordner).
+    public var companionExtensions: [String]
 
     public init(
         id: String, category: Category, title: String, summary: String, base: PathBase,
         patterns: [String], risk: Risk, method: RemovalMethod, blockingApps: [AppRef] = [],
         minAgeDays: Int? = nil, minSize: Int64 = 1, grouping: Grouping = .single,
-        needsFullDiskAccess: Bool = false, excludeNames: Set<String> = [], matchName: MatchName = .lastComponent
+        needsFullDiskAccess: Bool = false, excludeNames: Set<String> = [], matchName: MatchName = .lastComponent,
+        companionExtensions: [String] = []
     ) {
         self.id = id
         self.category = category
@@ -69,5 +73,6 @@ public struct PathRule: Sendable {
         self.needsFullDiskAccess = needsFullDiskAccess
         self.excludeNames = excludeNames
         self.matchName = matchName
+        self.companionExtensions = companionExtensions
     }
 }
