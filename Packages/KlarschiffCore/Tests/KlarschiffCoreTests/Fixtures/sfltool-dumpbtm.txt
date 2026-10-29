@@ -1,0 +1,234 @@
+========================
+ Records for UID -2 : FFFFEEEE-DDDD-CCCC-BBBB-AAAAFFFFFFFE
+========================
+
+ ServiceManagement migrated: true
+ LaunchServices registered: false
+
+ Items:
+
+ #1:
+                 UUID: 11111111-AAAA-4BBB-8CCC-000000000001
+                 Name: Beispiel Updater
+       Developer Name: Beispiel Updater
+                 Type: developer (0x20)
+                Flags: [ curated ] (0x4)
+          Disposition: [disabled, allowed, not notified] (0x2)
+           Identifier: Beispiel Updater
+                  URL: (null)
+           Generation: 0
+  Embedded Item Identifiers:
+    #1: 16.com.beispiel.updater.daemon
+
+ #2:
+                 UUID: 11111111-AAAA-4BBB-8CCC-000000000002
+                 Name: BeispielUpdaterDaemon
+       Developer Name: Beispiel Updater
+      Team Identifier: XXXXXXXXXX
+                 Type: legacy daemon (0x10010)
+                Flags: [ legacy, curated ] (0x5)
+          Disposition: [enabled, allowed, notified] (0xb)
+           Identifier: 16.com.beispiel.updater.daemon
+                  URL: /Library/LaunchDaemons/com.beispiel.updater.daemon.plist
+      Executable Path: /Library/Beispiel/Updater.bundle/Contents/MacOS/BeispielUpdaterDaemon
+           Generation: 2
+    Assoc. Bundle IDs: [ com.beispiel.Updater ]
+    Parent Identifier: Beispiel Updater
+
+========================
+ Records for UID 0 : FFFFEEEE-DDDD-CCCC-BBBB-AAAA00000000
+========================
+
+ ServiceManagement migrated: false
+ LaunchServices registered: false
+
+ Items:
+
+ #1:
+                 UUID: 22222222-AAAA-4BBB-8CCC-000000000001
+                 Name: RootHelfer
+       Developer Name: (null)
+      Team Identifier: XXXXXXXXXX
+                 Type: login item (0x4)
+                Flags: [  ] (0)
+          Disposition: [enabled, allowed, notified] (0xb)
+           Identifier: 4.com.beispiel.roothelfer
+                  URL: Contents/Library/LoginItems/RootHelfer.app
+           Generation: 1
+    Bundle Identifier: com.beispiel.roothelfer
+    Parent Identifier: 2.com.beispiel.root
+
+========================
+ Records for UID 501 : 33333333-AAAA-4BBB-8CCC-000000000501
+========================
+
+ ServiceManagement migrated: true
+ LaunchServices registered: true
+
+ Items:
+
+ #1:
+                 UUID: 33333333-AAAA-4BBB-8CCC-000000000001
+                 Name: (null)
+       Developer Name: (null)
+                 Type: developer (0x20)
+                Flags: [  ] (0)
+          Disposition: [disabled, allowed, not notified] (0x2)
+           Identifier: Unknown Developer
+                  URL: (null)
+           Generation: 1
+
+ #2:
+                 UUID: 33333333-AAAA-4BBB-8CCC-000000000002
+                 Name: Fensterdock
+       Developer Name: (null)
+      Team Identifier: XXXXXXXXXX
+                 Type: app (0x2)
+                Flags: [  ] (0)
+          Disposition: [enabled, allowed, notified] (0xb)
+           Identifier: 2.com.beispiel.fensterdock
+                  URL: /Applications/Fensterdock.app
+           Generation: 3
+    Bundle Identifier: com.beispiel.fensterdock
+
+ #3:
+                 UUID: 33333333-AAAA-4BBB-8CCC-000000000003
+                 Name: (null)
+       Developer Name: (null)
+      Team Identifier: XXXXXXXXXX
+                 Type: login item (0x4)
+                Flags: [  ] (0)
+          Disposition: [enabled, allowed, notified] (0xb)
+           Identifier: 4.com.beispiel.fensterdockLauncher
+                  URL: Contents/Library/LoginItems/fensterdockLauncher.app
+           Generation: 1
+    Bundle Identifier: com.beispiel.fensterdockLauncher
+    Parent Identifier: 2.com.beispiel.fensterdock
+
+ #4:
+                 UUID: 33333333-AAAA-4BBB-8CCC-000000000004
+                 Name: Fensterdock
+       Developer Name: (null)
+      Team Identifier: XXXXXXXXXX
+                 Type: app (0x2)
+                Flags: [  ] (0)
+          Disposition: [enabled, allowed, notified] (0xb)
+           Identifier: 2.com.beispiel.fensterdock
+                  URL: /Applications/Fensterdock.app
+           Generation: 2
+    Bundle Identifier: com.beispiel.fensterdock
+
+ #5:
+                 UUID: 33333333-AAAA-4BBB-8CCC-000000000003
+                 Name: (null)
+       Developer Name: (null)
+      Team Identifier: XXXXXXXXXX
+                 Type: login item (0x4)
+                Flags: [  ] (0)
+          Disposition: [enabled, allowed, notified] (0xb)
+           Identifier: 4.com.beispiel.fensterdockLauncher
+                  URL: Contents/Library/LoginItems/fensterdockLauncher.app
+           Generation: 1
+    Bundle Identifier: com.beispiel.fensterdockLauncher
+    Parent Identifier: 2.com.beispiel.fensterdock
+
+ #6:
+                 UUID: 33333333-AAAA-4BBB-8CCC-000000000006
+                 Name: Musikplayer
+       Developer Name: Musikplayer
+      Team Identifier: XXXXXXXXXX
+                 Type: app (0x2)
+                Flags: [  ] (0)
+          Disposition: [disabled, allowed, not notified] (0x2)
+           Identifier: 2.com.beispiel.musikplayer
+                  URL: /Applications/Musikplayer.app
+           Generation: 11
+    Bundle Identifier: com.beispiel.musikplayer
+
+ #7:
+                 UUID: 33333333-AAAA-4BBB-8CCC-000000000007
+                 Name: StartHelfer
+       Developer Name: Musikplayer
+      Team Identifier: XXXXXXXXXX
+                 Type: login item (0x4)
+                Flags: [  ] (0)
+          Disposition: [enabled, disallowed, notified] (0x9)
+           Identifier: 4.com.beispiel.musikplayer.starthelfer
+                  URL: Contents/Library/LoginItems/StartHelfer.app
+           Generation: 2
+    Bundle Identifier: com.beispiel.musikplayer.starthelfer
+    Parent Identifier: 2.com.beispiel.musikplayer
+
+ #8:
+                 UUID: 33333333-AAAA-4BBB-8CCC-000000000008
+                 Name: TunnelHelfer
+       Developer Name: (null)
+      Team Identifier: XXXXXXXXXX
+                 Type: login item (0x4)
+                Flags: [ sandboxed ] (0x40)
+          Disposition: [disabled, allowed, notified] (0xa)
+           Identifier: 4.com.beispiel.tunnel.login-item-helper
+                  URL: Contents/Library/LoginItems/TunnelHelfer.app
+           Generation: 2
+    Bundle Identifier: com.beispiel.tunnel.login-item-helper
+    Parent Identifier: 2.com.beispiel.tunnel
+
+ #9:
+                 UUID: 33333333-AAAA-4BBB-8CCC-000000000009
+                 Name: (null)
+       Developer Name: (null)
+      Team Identifier: XXXXXXXXXX
+                 Type: login item (0x4)
+                Flags: [  ] (0)
+          Disposition: [enabled, allowed, notified] (0xb)
+           Identifier: 4.com.beispiel.namenlos
+                  URL: Contents/Library/LoginItems/Namenlos.app
+           Generation: 1
+    Bundle Identifier: com.beispiel.namenlos
+
+ #10:
+                 UUID: 33333333-AAAA-4BBB-8CCC-000000000010
+                 Name: Notizen-Sync
+       Developer Name: (null)
+      Team Identifier: XXXXXXXXXX
+                 Type: legacy agent (0x10008)
+                Flags: [ legacy ] (0x1)
+          Disposition: [enabled, allowed, notified] (0xb)
+           Identifier: 8.com.beispiel.notizen.sync
+                  URL: file:///Users/beispiel/Library/LaunchAgents/com.beispiel.notizen.sync.plist
+      Executable Path: /Applications/Notizen.app/Contents/MacOS/sync
+           Generation: 1
+    Parent Identifier: Beispiel Notizen
+
+ #11:
+                 UUID: 33333333-AAAA-4BBB-8CCC-000000000011
+                 Name: Beispiel Notizen
+       Developer Name: Beispiel Notizen
+                 Type: developer (0x20)
+                Flags: [  ] (0)
+          Disposition: [disabled, allowed, not notified] (0x2)
+           Identifier: Beispiel Notizen
+                  URL: (null)
+           Generation: 0
+
+========================
+ Records for UID 502 : 44444444-AAAA-4BBB-8CCC-000000000502
+========================
+
+ ServiceManagement migrated: true
+ LaunchServices registered: true
+
+ Items:
+
+ #1:
+                 UUID: 44444444-AAAA-4BBB-8CCC-000000000001
+                 Name: FremderHelfer
+       Developer Name: (null)
+      Team Identifier: XXXXXXXXXX
+                 Type: login item (0x4)
+                Flags: [  ] (0)
+          Disposition: [enabled, allowed, notified] (0xb)
+           Identifier: 4.com.beispiel.fremderhelfer
+                  URL: Contents/Library/LoginItems/FremderHelfer.app
+           Generation: 1
+    Bundle Identifier: com.beispiel.fremderhelfer
