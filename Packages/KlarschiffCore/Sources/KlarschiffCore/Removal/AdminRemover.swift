@@ -48,6 +48,7 @@ public struct AdminRemover: Sendable {
                         keep.append(step)
                     }
                 }
+                if unit.failure != nil { keep = [] } // ein gesperrter Schritt: nichts der Einheit ausführen
                 if !keep.isEmpty, !dryRun {
                     unit.start = steps.count
                     unit.count = keep.count
@@ -97,15 +98,31 @@ public struct AdminRemover: Sendable {
         return results
     }
 
-    /// Jedes Pfad-Argument von `/bin/rm` muss den Guard passieren; Pfade müssen absolut sein.
+    private static let snapshotDate = try! NSRegularExpression(pattern: #"^\d{4}-\d{2}-\d{2}-\d{6}$"#)
+
+    /// Allow-List: nur `/bin/rm` (jeder Operand geprüft) und `tmutil deletelocalsnapshots <Datum>`.
     private func verdict(for step: AdminStep) -> SafetyVerdict {
-        guard step.executable == "/bin/rm" else { return .allowed }
+        switch step.executable {
+        case "/bin/rm": return rmVerdict(step.arguments)
+        case "/usr/bin/tmutil":
+            if step.arguments.count == 2, step.arguments[0] == "deletelocalsnapshots",
+               Self.snapshotDate.firstMatch(in: step.arguments[1], range: NSRange(step.arguments[1].startIndex..., in: step.arguments[1])) != nil {
+                return .allowed
+            }
+            return .denied("Unbekanntes Admin-Werkzeug")
+        default: return .denied("Unbekanntes Admin-Werkzeug")
+        }
+    }
+
+    /// BSD-`rm` beendet Optionen am ersten Nicht-Option-Argument (oder `--`); alles danach ist ein Operand.
+    private func rmVerdict(_ args: [String]) -> SafetyVerdict {
         var optionsEnded = false
         var targets = 0
-        for arg in step.arguments {
+        for arg in args {
             if !optionsEnded {
                 if arg == "--" { optionsEnded = true; continue }
                 if arg.hasPrefix("-") { continue }
+                optionsEnded = true
             }
             targets += 1
             guard arg.hasPrefix("/") else { return .denied("Liegt außerhalb der erlaubten Ordner") }

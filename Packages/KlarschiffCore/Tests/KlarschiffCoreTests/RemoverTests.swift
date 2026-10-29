@@ -36,6 +36,7 @@ private func item(_ id: String, _ url: URL?, size: Int64? = 10) -> FindingItem {
         let (g, _) = makeGuard(tree)
         let f = try tree.file("home/Library/Caches/foo/a.bin", bytes: 4)
         let r = await TrashRemover(guard: g).remove(finding(.trash), items: [item("a", f, size: 4)], dryRun: false)
+        defer { try? FileManager.default.removeItem(at: FileManager.default.homeDirectoryForCurrentUser.appending(path: ".Trash/a.bin")) }
         #expect(r.count == 1 && r[0].itemID == "a")
         #expect(r[0].outcome == .removed(freed: 4))
         #expect(!FileManager.default.fileExists(atPath: f.path))
@@ -154,12 +155,60 @@ private func item(_ id: String, _ url: URL?, size: Int64? = 10) -> FindingItem {
         #expect(r.allSatisfy { if case .failed = $0.outcome { true } else { false } })
     }
 
+    @Test func adminRmOperandAfterFirstOperandIsChecked() async throws {
+        let tree = try FixtureTree()
+        let (g, _) = makeGuard(tree)
+        let ex = FakeExecutor(fixed: .completed([0]))
+        let fnd = finding(.admin([rm("-rf", "/usr/local/texlive/2022", "-System")]), items: [item("a", nil)])
+        let r = await AdminRemover(executor: ex, guard: g).remove([(fnd, fnd.items)], dryRun: false)
+        #expect(ex.runs.isEmpty)
+        guard case .failed = r[0].outcome else { Issue.record("expected failed"); return }
+    }
+
+    @Test func adminAllowListDeniesUnknownTools() async throws {
+        let tree = try FixtureTree()
+        let (g, _) = makeGuard(tree)
+        let bad = [
+            AdminStep(executable: "rm", arguments: ["-rf", "/usr/local/texlive/2022"]),
+            AdminStep(executable: "/bin/sh", arguments: ["-c", "true"]),
+            AdminStep(executable: "/usr/bin/tmutil", arguments: ["deletelocalsnapshots", "/"]),
+            AdminStep(executable: "/usr/bin/tmutil", arguments: ["thinlocalsnapshots", "2026-01-01-120000"]),
+            AdminStep(executable: "/usr/bin/tmutil", arguments: ["deletelocalsnapshots", "2026-01-01"]),
+            AdminStep(executable: "/usr/bin/tmutil", arguments: ["deletelocalsnapshots", "2026-01-01-120000", "x"]),
+        ]
+        for step in bad {
+            let ex = FakeExecutor(fixed: .completed([0]))
+            let fnd = finding(.admin([step]), items: [item("a", nil)])
+            let r = await AdminRemover(executor: ex, guard: g).remove([(fnd, fnd.items)], dryRun: false)
+            #expect(ex.runs.isEmpty, "\(step)")
+            #expect(r[0].outcome == .failed("Gesperrt: Unbekanntes Admin-Werkzeug"), "\(step)")
+        }
+        let good = AdminStep(executable: "/usr/bin/tmutil", arguments: ["deletelocalsnapshots", "2026-01-01-120000"])
+        let ex = FakeExecutor(fixed: .completed([0]))
+        let fnd = finding(.admin([good]), items: [item("a", nil)])
+        _ = await AdminRemover(executor: ex, guard: g).remove([(fnd, fnd.items)], dryRun: false)
+        #expect(ex.runs == [[good]])
+    }
+
+    @Test func adminCombinedUnitRunsNothingIfAnyStepDenied() async throws {
+        let tree = try FixtureTree()
+        let (g, _) = makeGuard(tree)
+        let ex = FakeExecutor(fixed: .completed([0]))
+        // 1 Schritt-Satz, 3 Items -> kombinierter Modus
+        let fnd = finding(.admin([rm("-rf", "/usr/local/texlive/2022"), rm("-rf", "/System")]),
+                          items: [item("a", nil), item("b", nil), item("c", nil)])
+        let r = await AdminRemover(executor: ex, guard: g).remove([(fnd, fnd.items)], dryRun: false)
+        #expect(ex.runs.isEmpty)
+        #expect(r.count == 3)
+        #expect(r.allSatisfy { if case .failed(let m) = $0.outcome { m.hasPrefix("Gesperrt: ") } else { false } })
+    }
+
     @Test func adminOneToOneMappingUsesOnlySelectedStep() async throws {
         let tree = try FixtureTree()
         let (g, _) = makeGuard(tree)
         let ex = FakeExecutor(fixed: .completed([3]))
-        let s0 = AdminStep(executable: "/usr/bin/tmutil", arguments: ["deletelocalsnapshots", "A"])
-        let s1 = AdminStep(executable: "/usr/bin/tmutil", arguments: ["deletelocalsnapshots", "B"])
+        let s0 = AdminStep(executable: "/usr/bin/tmutil", arguments: ["deletelocalsnapshots", "2026-01-01-000001"])
+        let s1 = AdminStep(executable: "/usr/bin/tmutil", arguments: ["deletelocalsnapshots", "2026-01-01-000002"])
         let fnd = finding(.admin([s0, s1]), items: [item("A", nil), item("B", nil)])
         let r = await AdminRemover(executor: ex, guard: g).remove([(fnd, [fnd.items[1]])], dryRun: false)
         #expect(ex.runs == [[s1]])
