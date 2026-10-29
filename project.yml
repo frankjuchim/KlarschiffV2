@@ -19,7 +19,15 @@ targets:
     type: application
     platform: macOS
     sources:
-      - App
+      - path: App
+        excludes:
+          - "LaunchAgents/**"
+      # LaunchAgents des automatischen Checks (SMAppService.agent) liegen im Bundle unter Contents/Library/LaunchAgents.
+      - path: App/LaunchAgents
+        buildPhase:
+          copyFiles:
+            destination: wrapper
+            subpath: Contents/Library/LaunchAgents
     dependencies:
       - package: KlarschiffCore
         product: KlarschiffCore

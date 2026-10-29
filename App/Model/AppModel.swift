@@ -23,6 +23,7 @@ enum AppErrorText {
     static let keepList = "Konnte die Behalten-Liste nicht speichern."
     static let trashFailed = "Papierkorb konnte nicht geleert werden."
     static let dryRunPlan = "Trockenlauf aktiv – ein Plan ohne Trockenlauf wurde nicht ausgeführt."
+    static let checkSchedule = "Konnte den automatischen Check nicht anmelden."
 }
 
 /// Alles, was `AppModel` von außen braucht – in Tests durch Attrappen ersetzbar.
@@ -42,6 +43,19 @@ struct AppDependencies: Sendable {
     var measureSystemData: @Sendable (ScanContext, @escaping @Sendable (Int, Int) -> Void) async -> SystemDataReport
     var dryRun: Bool
     var terminate: @Sendable (AppRef) async -> Bool
+    /// Verlauf des automatischen Checks.
+    var history: CheckHistory
+    /// Schnelle Messung der Wurzel-Systembereiche für den Check (ohne Home, ohne Aufräum-Scanner).
+    var measureSystemRoots: CheckRunner.MeasureSystemRoots
+    var notifier: any Notifier
+    var agentService: any AgentService
+
+    /// Der löschfreie Teil – dieselben Bausteine wie der normale Scan, ohne Remover.
+    var check: CheckDependencies {
+        CheckDependencies(
+            engine: engine, keepList: keepList, history: history, measureSystemRoots: measureSystemRoots,
+            diskSpace: diskSpace, makeContext: makeContext, notifier: notifier)
+    }
 }
 
 @MainActor @Observable
@@ -71,9 +85,18 @@ final class AppModel {
     var systemData: SystemDataReport?
     var isMeasuringSystemData = false
     var systemDataProgress: Double = 0
+    /// Automatischer Check: Zeitplan, Verlauf (neueste zuerst), Anmeldestatus, Mitteilungs-Erlaubnis.
+    private(set) var checkSchedule: CheckSchedule
+    var checkHistory: [CheckSnapshot] = []
+    var lastCheck: CheckSnapshot? { checkHistory.first }
+    var isChecking = false
+    var notificationsDenied = false
+    var agentStatus: AgentStatus = .notRegistered
 
     /// UserDefaults-Schlüssel des Schalters „Trockenlauf“ im Menü „Entwickler“.
     static let dryRunDefaultsKey = "dryRun"
+    /// UserDefaults-Schlüssel des Zeitplans für den automatischen Check.
+    static let checkScheduleDefaultsKey = "checkSchedule"
 
     /// Vom Start erzwungener Trockenlauf (`--dry-run` / `KLARSCHIFF_DRY_RUN=1`); der Schalter kann ihn nicht abschalten.
     let isDryRunForced: Bool
@@ -97,6 +120,53 @@ final class AppModel {
         self.defaults = defaults
         isDryRunForced = dependencies.dryRun
         dryRunSetting = defaults.bool(forKey: Self.dryRunDefaultsKey)
+        checkSchedule = defaults.string(forKey: Self.checkScheduleDefaultsKey).flatMap(CheckSchedule.init) ?? .off
+        refreshAgentStatus()
+    }
+
+    private var scheduler: CheckScheduler { CheckScheduler(service: deps.agentService) }
+
+    // MARK: - Automatischer Check
+
+    /// Meldet den passenden LaunchAgent an (die anderen ab) und merkt sich die Wahl. Beim Einschalten wird
+    /// nach der Mitteilungs-Erlaubnis gefragt. Fehler landen in `lastError`, der Status in `agentStatus`.
+    func setCheckSchedule(_ schedule: CheckSchedule) async {
+        checkSchedule = schedule
+        defaults.set(schedule.rawValue, forKey: Self.checkScheduleDefaultsKey)
+        if schedule != .off {
+            notificationsDenied = !(await deps.notifier.requestAuthorization())
+        }
+        do {
+            try await scheduler.apply(schedule)
+        } catch {
+            lastError = AppErrorText.checkSchedule
+        }
+        refreshAgentStatus()
+    }
+
+    func refreshAgentStatus() {
+        agentStatus = scheduler.status(for: checkSchedule)
+    }
+
+    /// „Jetzt prüfen“: derselbe Kern wie der LaunchAgent, im laufenden Prozess. Nicht während Scan, Entfernen,
+    /// Messen oder eines anderen Checks.
+    func runCheckNow() async {
+        guard !isChecking, !isScanning, !isRemoving, !isMeasuringSystemData else { return }
+        isChecking = true
+        let outcome = await BackgroundCheck.run(dependencies: deps.check)
+        notificationsDenied = !outcome.notificationsAllowed
+        await loadCheckHistory()
+        isChecking = false
+    }
+
+    func loadCheckHistory() async {
+        checkHistory = await deps.history.all()
+    }
+
+    /// Klick auf eine Check-Mitteilung: Ziel-Tab aus `userInfo["tab"]` (`AppTab.rawValue`); Unbekanntes ignorieren.
+    func openTab(fromNotification rawTab: String?) {
+        guard let rawTab, let tab = AppTab(rawValue: rawTab) else { return }
+        selectedTab = tab
     }
 
     // MARK: - Trockenlauf
@@ -427,41 +497,32 @@ extension AppDependencies {
     }
 
     static func live() -> AppDependencies {
-        let home = URL(filePath: NSHomeDirectory())
-        let cacheDir = SafetyGuard.userCacheDirectory() ?? SafetyGuard.missingUserCacheDirectory
-        let tempDir = SafetyGuard.userTempDirectory() ?? URL(filePath: "/var/empty/klarschiff-no-temp-dir")
-        let commands = ProcessCommandRunner()
-        let tools = ToolLocator.standard
-        let apps = WorkspaceRunningApps()
-        let safety = SafetyGuard.production(home: home)
-        let disk: @Sendable () throws -> DiskSpace = { try DiskInfo.current() }
-        let fda: @Sendable () -> Bool = { FullDiskAccess.isGranted(home: home) }
+        let env = LiveEnvironment()
+        let safety = SafetyGuard.production(home: env.home)
         let deleter = DeleteRemover(guard: safety)
         let runner = RemovalRunner(
             trash: TrashRemover(guard: safety),
             delete: deleter,
-            tool: ToolRemover(runner: commands, tools: tools),
-            admin: AdminRemover(executor: AppleScriptPrivilegedExecutor(runner: commands), guard: safety),
-            runningApps: apps,
-            diskSpace: disk)
+            tool: ToolRemover(runner: env.commands, tools: env.tools),
+            admin: AdminRemover(executor: AppleScriptPrivilegedExecutor(runner: env.commands), guard: safety),
+            runningApps: env.apps,
+            diskSpace: env.disk)
         let bigChunks = BigChunksScanner()
+        let commands = env.commands
+        let disk = env.disk
+        let apps = env.apps
+        let check = env.check
 
         return AppDependencies(
-            engine: ScanEngine(scanners: Catalog.allScanners()),
-            keepList: KeepList(fileURL: KeepList.defaultFileURL(home: home)),
+            engine: check.engine,
+            keepList: check.keepList,
             runner: runner,
             diskSpace: disk,
-            makeContext: { slow in
-                ScanContext(
-                    home: home, userCacheDir: cacheDir, rootPrefix: URL(filePath: "/"), runner: commands,
-                    tools: tools, sizer: SizeMeter(), runningApps: apps, claims: PathClaims(), now: Date(),
-                    hasFullDiskAccess: fda(), includeSlowChecks: slow,
-                    userTempDir: tempDir)
-            },
+            makeContext: check.makeContext,
             bigChunks: { ctx, findings in await bigChunks.scan(ctx, findings: findings) },
             photos: { ctx in await photosInfo(ctx) },
             trash: { ctx in await trashSize(ctx) },
-            fullDiskAccess: fda,
+            fullDiskAccess: env.fda,
             emptyTrash: { dryRun in try await emptyTrashViaFinder(runner: commands, disk: disk, dryRun: dryRun) },
             measureSystemData: { ctx, progress in await SystemDataScanner().scan(ctx, progress: progress) },
             dryRun: isDryRunRequested,
@@ -472,7 +533,11 @@ extension AppDependencies {
                     try? await Task.sleep(for: .milliseconds(250))
                 }
                 return true
-            })
+            },
+            history: check.history,
+            measureSystemRoots: check.measureSystemRoots,
+            notifier: check.notifier,
+            agentService: SMAppAgentService())
     }
 
     /// Leert alle Papierkörbe, die der Finder zeigt (lokal, iCloud Drive, externe Volumes).
@@ -501,5 +566,46 @@ extension AppDependencies {
         var freed: Int64 = 0
         if let before, let after = try? disk() { freed = max(0, after.free - before.free) }
         return RemovalReport(results: [], freedBytes: freed, failures: [])
+    }
+}
+
+extension CheckDependencies {
+    /// Produktion für den `--check`-Lauf: nur lesende Bausteine, kein Remover.
+    static func live() -> CheckDependencies { LiveEnvironment().check }
+}
+
+/// Gemeinsame Produktions-Bausteine von App und `--check`-Lauf (lesend; Remover baut nur `AppDependencies.live`).
+private struct LiveEnvironment {
+    let home = URL(filePath: NSHomeDirectory())
+    let commands = ProcessCommandRunner()
+    let tools = ToolLocator.standard
+    let apps = WorkspaceRunningApps()
+    let disk: @Sendable () throws -> DiskSpace = { try DiskInfo.current() }
+    let fda: @Sendable () -> Bool
+    let check: CheckDependencies
+
+    init() {
+        let home = self.home
+        let cacheDir = SafetyGuard.userCacheDirectory() ?? SafetyGuard.missingUserCacheDirectory
+        let tempDir = SafetyGuard.userTempDirectory() ?? URL(filePath: "/var/empty/klarschiff-no-temp-dir")
+        let commands = self.commands
+        let tools = self.tools
+        let apps = self.apps
+        let fda: @Sendable () -> Bool = { FullDiskAccess.isGranted(home: home) }
+        self.fda = fda
+        check = CheckDependencies(
+            engine: ScanEngine(scanners: Catalog.allScanners()),
+            keepList: KeepList(fileURL: KeepList.defaultFileURL(home: home)),
+            history: CheckHistory(fileURL: CheckHistory.defaultFileURL(home: home)),
+            measureSystemRoots: { ctx in await BackgroundCheck.measureSystemRootsLive(ctx) },
+            diskSpace: disk,
+            makeContext: { slow in
+                ScanContext(
+                    home: home, userCacheDir: cacheDir, rootPrefix: URL(filePath: "/"), runner: commands,
+                    tools: tools, sizer: SizeMeter(), runningApps: apps, claims: PathClaims(), now: Date(),
+                    hasFullDiskAccess: fda(), includeSlowChecks: slow,
+                    userTempDir: tempDir)
+            },
+            notifier: UserNotificationCenterNotifier())
     }
 }

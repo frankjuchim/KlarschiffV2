@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>de.frankjuchim.klarschiff2.check.monthly</string>
+	<key>BundleProgram</key>
+	<string>Contents/MacOS/Klarschiff 2</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>Klarschiff 2</string>
+		<string>--check</string>
+	</array>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Day</key>
+		<integer>1</integer>
+		<key>Hour</key>
+		<integer>10</integer>
+		<key>Minute</key>
+		<integer>0</integer>
+	</dict>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>LowPriorityIO</key>
+	<true/>
+	<key>Nice</key>
+	<integer>10</integer>
+	<key>AssociatedBundleIdentifiers</key>
+	<array>
+		<string>de.frankjuchim.klarschiff2</string>
+	</array>
+</dict>
+</plist>

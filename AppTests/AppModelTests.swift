@@ -48,6 +48,17 @@ private struct NoopExecutor: PrivilegedExecutor {
     func run(_ steps: [AdminStep]) async -> AdminRunResult { .completed(steps.map { _ in 0 }) }
 }
 
+private struct SilentNotifier: Notifier {
+    func requestAuthorization() async -> Bool { false }
+    func send(_ n: CheckNotification) async {}
+}
+
+private struct NoAgents: AgentService {
+    func register(_ plist: String) throws {}
+    func unregister(_ plist: String) async throws {}
+    func status(_ plist: String) -> AgentStatus { .notRegistered }
+}
+
 private func item(_ id: String, size: Int64, blocking: AppRef? = nil) -> FindingItem {
     FindingItem(id: id, url: URL(filePath: "/tmp/klarschiff-test/\(id)"), name: id, size: size, blockingApp: blocking)
 }
@@ -106,7 +117,11 @@ private func makeModel(
         emptyTrash: emptyTrash,
         measureSystemData: measure,
         dryRun: dryRun,
-        terminate: { _ in false })
+        terminate: { _ in false },
+        history: CheckHistory(fileURL: keepFile.deletingLastPathComponent().appending(path: "history.json")),
+        measureSystemRoots: { _ in [:] },
+        notifier: SilentNotifier(),
+        agentService: NoAgents())
     return AppModel(dependencies: deps, defaults: defaults)
 }
 

@@ -44,7 +44,11 @@ extension AppDependencies {
             emptyTrash: { _ in RemovalReport(results: [], freedBytes: 0, failures: []) },
             measureSystemData: { _, _ in PreviewSystemData.report },
             dryRun: true,
-            terminate: { _ in false })
+            terminate: { _ in false },
+            history: CheckHistory(fileURL: keepFile.deletingLastPathComponent().appending(path: "history.json")),
+            measureSystemRoots: { _ in [:] },
+            notifier: PreviewNotifier(),
+            agentService: PreviewAgentService())
     }
 }
 
@@ -282,4 +286,15 @@ private enum PreviewSystemData {
             failures: [ScanFailure(scannerID: "systemdata.unaccounted",
                 message: "Einige Bereiche konnten nicht vollständig gemessen werden – „nicht zugeordnet“ ist daher eher zu hoch.")])
     }
+}
+
+private struct PreviewNotifier: Notifier {
+    func requestAuthorization() async -> Bool { true }
+    func send(_ n: CheckNotification) async {}
+}
+
+private struct PreviewAgentService: AgentService {
+    func register(_ plist: String) throws {}
+    func unregister(_ plist: String) async throws {}
+    func status(_ plist: String) -> AgentStatus { .notRegistered }
 }
