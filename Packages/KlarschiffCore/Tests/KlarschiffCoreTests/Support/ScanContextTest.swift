@@ -9,7 +9,8 @@ extension ScanContext {
         running: Set<String> = [],
         tools: ToolLocator = ToolLocator(searchPaths: [], fileExists: { _ in false }),
         hasFullDiskAccess: Bool = true,
-        now: Date = Date()
+        now: Date = Date(),
+        includeSlowChecks: Bool = false
     ) -> ScanContext {
         ScanContext(
             home: root.appending(path: "home", directoryHint: .isDirectory),
@@ -21,7 +22,8 @@ extension ScanContext {
             runningApps: FakeRunningApps(running: running),
             claims: PathClaims(),
             now: now,
-            hasFullDiskAccess: hasFullDiskAccess
+            hasFullDiskAccess: hasFullDiskAccess,
+            includeSlowChecks: includeSlowChecks
         )
     }
 }

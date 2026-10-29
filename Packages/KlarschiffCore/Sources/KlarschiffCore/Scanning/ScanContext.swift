@@ -12,10 +12,13 @@ public struct ScanContext: Sendable {
     public var claims: PathClaims
     public var now: Date
     public var hasFullDiskAccess: Bool
+    /// Langsame Prüfungen (z. B. `softwareupdate -l`) – nur beim manuellen „Neu scannen“.
+    public var includeSlowChecks: Bool
 
     public init(
         home: URL, userCacheDir: URL, rootPrefix: URL, runner: CommandRunner, tools: ToolLocator,
-        sizer: SizeMeter, runningApps: RunningApps, claims: PathClaims, now: Date, hasFullDiskAccess: Bool
+        sizer: SizeMeter, runningApps: RunningApps, claims: PathClaims, now: Date, hasFullDiskAccess: Bool,
+        includeSlowChecks: Bool = false
     ) {
         self.home = home
         self.userCacheDir = userCacheDir
@@ -27,6 +30,7 @@ public struct ScanContext: Sendable {
         self.claims = claims
         self.now = now
         self.hasFullDiskAccess = hasFullDiskAccess
+        self.includeSlowChecks = includeSlowChecks
     }
 
     /// Absoluter Pfad unterhalb des Wurzel-Präfixes, z. B. `absolute("/usr/local/texlive")`.

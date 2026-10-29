@@ -1,0 +1,8 @@
+Software Update Tool
+
+Finding available software
+Software Update found the following new or updated software:
+* Label: macOS Tahoe 26.1-25B78
+	Title: macOS Tahoe 26.1, Version: 26.1, Size: 3456789KiB, Recommended: YES, Action: restart, 
+* Label: Safari26.1VenturaAuto-26.1
+	Title: Safari, Version: 26.1, Size: 123456KiB, Recommended: YES, 

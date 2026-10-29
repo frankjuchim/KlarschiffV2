@@ -9,7 +9,7 @@ let package = Package(
     ],
     targets: [
         .target(name: "KlarschiffCore"),
-        .testTarget(name: "KlarschiffCoreTests", dependencies: ["KlarschiffCore"])
+        .testTarget(name: "KlarschiffCoreTests", dependencies: ["KlarschiffCore"], resources: [.copy("Fixtures")])
     ],
     swiftLanguageModes: [.v6]
 )
