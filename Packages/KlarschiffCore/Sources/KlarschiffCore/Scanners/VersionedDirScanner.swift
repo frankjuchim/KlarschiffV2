@@ -12,6 +12,7 @@ public struct VersionedDirScanner: Scanner {
     let method: RemovalMethod
     let blockingApps: [AppRef]
     let groupBy: @Sendable (String) -> String
+    let versionOf: @Sendable (String) -> String
     let titleFor: (@Sendable (_ parentName: String, _ childName: String) -> String)?
 
     /// `groupBy` bekommt den Pfad des Unterordners und liefert den Gruppenschlüssel.
@@ -20,6 +21,7 @@ public struct VersionedDirScanner: Scanner {
         id: String, category: Category, titlePrefix: String, summary: String, base: PathBase, parent: String,
         risk: Risk, method: RemovalMethod, blockingApps: [AppRef] = [],
         groupBy: @escaping @Sendable (String) -> String = { _ in "" },
+        versionOf: @escaping @Sendable (String) -> String = { $0 },
         titleFor: (@Sendable (_ parentName: String, _ childName: String) -> String)? = nil
     ) {
         self.id = id
@@ -32,6 +34,7 @@ public struct VersionedDirScanner: Scanner {
         self.method = method
         self.blockingApps = blockingApps
         self.groupBy = groupBy
+        self.versionOf = versionOf
         self.titleFor = titleFor
     }
 
@@ -61,7 +64,7 @@ public struct VersionedDirScanner: Scanner {
         for (i, child) in children.enumerated() {
             let g = groups[i]
             if let j = newest[g] {
-                if VersionCompare.isNewer(child.url.lastPathComponent, than: children[j].url.lastPathComponent) { newest[g] = i }
+                if VersionCompare.isNewer(versionOf(child.url.lastPathComponent), than: versionOf(children[j].url.lastPathComponent)) { newest[g] = i }
             } else {
                 newest[g] = i
             }
@@ -86,6 +89,12 @@ public struct VersionedDirScanner: Scanner {
 }
 
 extension VersionedDirScanner {
+    /// Entfernt ein führendes Gerätemodell wie „iPhone15,2 “ aus „iPhone15,2 18.2 (22C150)“.
+    static func stripDeviceModel(_ name: String) -> String {
+        guard let r = name.range(of: #"^[A-Za-z]+\d+,\d+ "#, options: .regularExpression) else { return name }
+        return String(name[r.upperBound...])
+    }
+
     /// Device-Support-Ordner: Plattform aus dem Elternordner („iOS DeviceSupport“ → „iOS“).
     static let deviceSupport = VersionedDirScanner(
         id: "xcode.deviceSupport", category: .xcode, titlePrefix: "Gerätesupport",
@@ -93,12 +102,14 @@ extension VersionedDirScanner {
         base: .home, parent: "Library/Developer/Xcode/*DeviceSupport", risk: .safe, method: .trash,
         blockingApps: Catalog.xcodeApps,
         groupBy: { URL(fileURLWithPath: $0).deletingLastPathComponent().lastPathComponent },
+        versionOf: stripDeviceModel,
         titleFor: { parentName, child in
             var platform = parentName
             if platform.hasSuffix(" DeviceSupport") { platform.removeLast(" DeviceSupport".count) }
             else if platform.hasSuffix("DeviceSupport") { platform.removeLast("DeviceSupport".count) }
             platform = platform.trimmingCharacters(in: .whitespaces)
-            return "\(platform.isEmpty ? "" : platform + "-")Gerätesupport \(child)"
+            let model = stripDeviceModel(child) == child ? "" : " · \(child.prefix(while: { $0 != " " }))"
+            return "\(platform.isEmpty ? "" : platform + "-")Gerätesupport \(stripDeviceModel(child))\(model)"
         })
 
     private static func manager(id: String, name: String, parent: String, what: String) -> VersionedDirScanner {

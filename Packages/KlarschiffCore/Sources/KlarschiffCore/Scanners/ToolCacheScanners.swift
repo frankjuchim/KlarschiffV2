@@ -104,21 +104,32 @@ public struct OllamaScanner: Scanner {
 
     public func scan(_ ctx: ScanContext) async throws -> [Finding] {
         let summary = "Ein lokal gespeichertes KI-Modell von Ollama. Du kannst es jederzeit mit „ollama pull“ erneut laden."
+        var cliError: Error?
         if let ollama = ctx.tools.path(for: "ollama") {
-            let out = try await runTool(ctx, ollama, name: "ollama", ["list"])
-            return Self.parseList(out).map { model in
-                let cmd = ToolCommand(tool: "ollama", arguments: ["rm", model.name], timeout: .seconds(300))
-                return Finding(
-                    id: FindingID(scannerID: id, key: model.name), category: .aiLeftovers,
-                    title: "Ollama-Modell: \(model.name)", summary: summary,
-                    risk: .review, method: .tool([cmd], fallback: nil),
-                    items: [FindingItem(id: model.name, name: model.name, size: model.size)],
-                    size: model.size, blockingApps: [], keepSuggested: false,
-                    commandPreview: [cmd.display], needsFullDiskAccess: false)
+            do {
+                let out = try await runTool(ctx, ollama, name: "ollama", ["list"])
+                return Self.parseList(out).map { model in
+                    let cmd = ToolCommand(tool: "ollama", arguments: ["rm", model.name], timeout: .seconds(300))
+                    return Finding(
+                        id: FindingID(scannerID: id, key: model.name), category: .aiLeftovers,
+                        title: "Ollama-Modell: \(model.name)", summary: summary,
+                        risk: .review, method: .tool([cmd], fallback: nil),
+                        items: [FindingItem(id: model.name, name: model.name, size: model.size)],
+                        size: model.size, blockingApps: [], keepSuggested: false,
+                        commandPreview: [cmd.display], needsFullDiskAccess: false)
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                // Server läuft nicht o. Ä.: wie ohne CLI den Modellordner anbieten.
+                cliError = error
             }
         }
         let dir = ctx.homePath(".ollama/models")
-        guard isDirectory(dir) else { return [] }
+        guard isDirectory(dir) else {
+            if let cliError { throw cliError }
+            return []
+        }
         let size = try? await ctx.sizer.size(of: dir)
         let blocking = ctx.runningApps.running([
             AppRef(bundleID: "com.electron.ollama", processName: nil, displayName: "Ollama"),
@@ -159,8 +170,11 @@ public struct RustupScanner: Scanner {
         var findings: [Finding] = []
         for tc in Self.parse(out) {
             try Task.checkCancellation()
+            guard !tc.name.contains("/"), tc.name != "..", tc.name != "." else { continue }
             let url = ctx.homePath(".rustup/toolchains/\(tc.name)")
-            guard isDirectory(url) else { continue }
+            // Kein Symlink (lstat), nur ein echter Ordner.
+            guard (try? FileManager.default.attributesOfItem(atPath: url.path))?[.type] as? FileAttributeType == .typeDirectory
+            else { continue }
             let size = try? await ctx.sizer.size(of: url)
             let cmd = ToolCommand(tool: "rustup", arguments: ["toolchain", "uninstall", tc.name], timeout: .seconds(300))
             findings.append(Finding(

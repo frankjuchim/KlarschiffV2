@@ -51,4 +51,17 @@ import Foundation
         let scanner = Catalog.allScanners().first { $0.id == "languages.pyenv" }!
         #expect(try await scanner.scan(.test()).isEmpty)
     }
+
+    @Test func deviceSupportIgnoresModelNumber() async throws {
+        let tree = try FixtureTree()
+        let base = "home/Library/Developer/Xcode/iOS DeviceSupport"
+        try tree.file("\(base)/iPhone15,2 18.2 (22C150)/a", bytes: 100)
+        try tree.file("\(base)/iPhone16,1 17.5 (21F79)/a", bytes: 100)
+        try tree.file("\(base)/17.0 (21A329)/a", bytes: 100)
+        let scanner = Catalog.allScanners().first { $0.id == "xcode.deviceSupport" }!
+        let fs = try await scanner.scan(.test(root: tree.root))
+        #expect(fs.filter(\.keepSuggested).map { $0.items[0].name } == ["iPhone15,2 18.2 (22C150)"])
+        #expect(fs.contains { $0.title == "iOS-Gerätesupport 18.2 (22C150) · iPhone15,2" })
+        #expect(fs.contains { $0.title == "iOS-Gerätesupport 17.0 (21A329)" })
+    }
 }

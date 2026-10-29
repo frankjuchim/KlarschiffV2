@@ -28,14 +28,6 @@ import Foundation
         #expect(fs.allSatisfy { !$0.commandPreview.joined().contains("#") })
     }
 
-    @Test func ollamaListFailureThrows() async throws {
-        let fake = FakeCommandRunner()
-        fake.stub("/fake/bin/ollama", ["list"], result: CommandResult(exitCode: 1, stdout: "", stderr: "could not connect"))
-        await #expect(throws: CommandError.self) {
-            _ = try await OllamaScanner().scan(.test(runner: fake, tools: tools("ollama")))
-        }
-    }
-
     @Test func ollamaFallsBackToDeleteWithoutCli() async throws {
         let tree = try FixtureTree()
         try tree.file("home/.ollama/models/blobs/sha256-a", bytes: 4000)
@@ -48,6 +40,37 @@ import Foundation
         let path = tree.root.appending(path: "home/.ollama/models").path
         #expect(f.commandPreview == ["rm -rf " + ShellQuote.quote(path)])
         #expect(f.blockingApps.map(\.displayName) == ["ollama"])
+    }
+
+    @Test func ollamaServerDownFallsBackToFolder() async throws {
+        let tree = try FixtureTree()
+        try tree.file("home/.ollama/models/blobs/sha256-a", bytes: 4000)
+        let fake = FakeCommandRunner()
+        fake.stub("/fake/bin/ollama", ["list"], result: CommandResult(exitCode: 1, stdout: "", stderr: "could not connect"))
+        let fs = try await OllamaScanner().scan(.test(root: tree.root, runner: fake, running: ["com.electron.ollama"], tools: tools("ollama")))
+        let f = try #require(fs.first)
+        #expect(f.id.key == "models" && f.method == .delete)
+        #expect(f.blockingApps.map(\.displayName) == ["Ollama"])
+    }
+
+    @Test func ollamaServerDownWithoutFolderThrows() async throws {
+        let fake = FakeCommandRunner()
+        fake.stub("/fake/bin/ollama", ["list"], result: CommandResult(exitCode: 1, stdout: "", stderr: "x"))
+        await #expect(throws: CommandError.self) {
+            _ = try await OllamaScanner().scan(.test(runner: fake, tools: tools("ollama")))
+        }
+    }
+
+    @Test func rustupRejectsUnsafeNamesAndSymlinks() async throws {
+        let tree = try FixtureTree()
+        let outside = try tree.dir("outside")
+        try tree.dir("home/.rustup/toolchains/good")
+        try tree.symlink("home/.rustup/toolchains/linked", to: outside)
+        let fake = FakeCommandRunner()
+        fake.stub("/fake/bin/rustup", ["toolchain", "list"],
+                  result: CommandResult(exitCode: 0, stdout: "good\n..\n.\n../x\na/b\nlinked\n", stderr: ""))
+        let fs = try await RustupScanner().scan(.test(root: tree.root, runner: fake, tools: tools("rustup")))
+        #expect(fs.map(\.id.key) == ["good"])
     }
 
     @Test func ollamaNothingWithoutCliAndModels() async throws {
