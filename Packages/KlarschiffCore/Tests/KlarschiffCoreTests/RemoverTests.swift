@@ -201,7 +201,8 @@ private func item(_ id: String, _ url: URL?, size: Int64? = 10) -> FindingItem {
     }
 
     @Test(arguments: [("/Library/Caches/a", true), ("/library/caches/A", true), ("/Library/Logs/a/b", true),
-                      ("/Library/Caches/a/b", false), ("/LIBRARY/caches/a/b/c", false)])
+                      ("/Library/Caches/a/b", false), ("/LIBRARY/caches/a/b/c", false),
+                      ("/Library/Caches/a/\u{301}b", false), ("/Library/Caches/a/\u{301}", false)])
     func adminRmLibraryCachesOnlyDirectChildren(_ c: (String, Bool)) async throws {
         let tree = try FixtureTree()
         let (g, _) = makeGuard(tree)
