@@ -33,6 +33,21 @@ KLARSCHIFF_LIVE_SCAN=1 KLARSCHIFF_LIVE_SCAN_OUT=/tmp/live-scan.md \
   swift test --package-path Packages/KlarschiffCore --filter LiveScan
 ```
 
+## Systemdaten
+
+Der Tab „Systemdaten“ erklärt, was auf dem Daten-Volume als „Systemdaten“ Platz belegt: Er misst Systembereiche
+(Assets, System-Datenbanken, Systembibliothek, Auslagerung …), „Deine Daten“ und den nicht zugeordneten Rest und
+sagt zu jedem Bereich, ob er zu macOS gehört oder aufräumbar ist. Messen ist rein lesend. Aufräumfunde sind nie
+vorausgewählt, tragen eine deutliche Warnung und lassen sich erst nach „Ich habe verstanden“ ausführen; Aktionen mit
+Administratorrechten fragen genau einmal nach dem Passwort. „Nicht zugeordnet“ ist ein Näherungswert und eher zu hoch,
+wenn Bereiche nicht vollständig gemessen werden konnten (z. B. ohne vollen Festplattenzugriff). Die Messung auf dem
+echten Mac gibt es als Opt-in-Test:
+
+```sh
+KLARSCHIFF_LIVE_SCAN=1 KLARSCHIFF_LIVE_SCAN_OUT=/tmp/systemdata.md \
+  swift test --package-path Packages/KlarschiffCore --filter liveSystemData
+```
+
 ## Trockenlauf
 
 Im Trockenlauf läuft alles wie gewohnt, es wird aber nichts entfernt. Er ist aktiv, wenn die App mit dem

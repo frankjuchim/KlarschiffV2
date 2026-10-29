@@ -30,8 +30,17 @@
 - [ ] `scripts/release.sh` + Notarisierung mit echtem Team einmal durchlaufen lassen.
 - [x] CI auf GitHub (`macos-26`) grün (29.10.2026).
 
+## Stand Teilprojekt 2 – Systemdaten (29.10.2026)
+- Tab „Systemdaten“ (Messung des Data-Volumes, Bereichsbaum, „Deine Daten“, nicht zugeordnet, Systemfunde mit Warnung/Bestätigung) umgesetzt; Opt-in-Livetest `liveSystemData` (`KLARSCHIFF_LIVE_SCAN=1`).
+- Live-Messung auf Franks Mac: **37,6 % zugeordnet** (Ziel ≥ 90 %). Ursache: Home-Messung lief in die 120-s-Frist, nicht ein fehlender Katalogbereich. Details: `docs/superpowers/plans/2026-10-29-abnahme.md` (Abschnitt „Teilprojekt 2“).
+
+### Offen für Frank (TP2)
+- [ ] Home-Frist/Messstrategie entscheiden, erneut messen (Ziel ≥ 90 %).
+- [ ] Tab Systemdaten in `--dry-run` ansehen.
+- [ ] Einen Admin-Aufräumfund echt ausführen → genau eine Passwortabfrage; „Ich habe verstanden“ muss den Button freischalten.
+
 ## Startnachricht für die Sitzung auf dem Mac
 > Lies CLAUDE.md und docs/UEBERGABE.md. Setze den Plan docs/superpowers/plans/2026-10-29-klarschiff2-teilprojekt1.md mit superpowers:subagent-driven-development um, beginnend bei Task 1. Branch: claude/intelligent-galileo-8ok14a. Nach jedem Task committen und pushen.
 
 ## Danach
-Teilprojekte 2–5 (Systemdaten, Automatischer Check + Migration alter Agents, Hintergrunddienste, Leistung) jeweils mit eigenem Brainstorming → Spec → Plan. Offene Fragen dafür: Menüleisten-Icon ja/nein, Schwellen des Wachstumswächters.
+Teilprojekte 3–5 (Automatischer Check + Migration alter Agents, Hintergrunddienste, Leistung) jeweils mit eigenem Brainstorming → Spec → Plan. Offene Fragen dafür: Menüleisten-Icon ja/nein, Schwellen des Wachstumswächters.
