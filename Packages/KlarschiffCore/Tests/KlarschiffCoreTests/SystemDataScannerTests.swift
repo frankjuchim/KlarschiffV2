@@ -175,9 +175,9 @@ private func find(_ id: String, in areas: [SystemArea]) -> SystemArea? {
         var r = await SystemDataScanner(sizeOf: sizer(tree.root, [:])).scan(.test(root: tree.root, runner: diskutilOK())) { _, _ in }
         #expect(!r.unaccountedIsUpperBound && !r.userDataIsLowerBound)
         #expect(!r.failures.contains { $0.scannerID == "systemdata.unaccounted" })
-        // Home unvollständig
-        let home = tree.root.appending(path: "home").path.dropFirst(tree.root.path.count)
-        r = await SystemDataScanner(sizeOf: sizer(tree.root, [:], incomplete: [String(home)])).scan(.test(root: tree.root, runner: diskutilOK())) { _, _ in }
+        // Home-Unterordner unvollständig
+        _ = try tree.dir("home/a")
+        r = await SystemDataScanner(sizeOf: sizer(tree.root, [:], incomplete: ["/home/a"])).scan(.test(root: tree.root, runner: diskutilOK())) { _, _ in }
         #expect(r.userDataIsLowerBound && r.unaccountedIsUpperBound)
         #expect(r.failures.contains { $0.scannerID == "systemdata.unaccounted" })
         // /Applications Timeout
@@ -189,6 +189,27 @@ private func find(_ id: String, in areas: [SystemArea]) -> SystemArea? {
         // Bereich Timeout
         r = await SystemDataScanner(areaTimeout: fast, sizeOf: sizer(tree.root, [:], hang: ["/opt"])).scan(.test(root: tree.root, runner: diskutilOK())) { _, _ in }
         #expect(r.unaccountedIsUpperBound)
+    }
+
+    @Test func homeMeasuredPerChildWithOneHanging() async throws {
+        let tree = try FixtureTree()
+        for n in ["a", "b", ".hidden", "slow"] { _ = try tree.dir("home/\(n)") }
+        let scanner = SystemDataScanner(areaTimeout: .milliseconds(300), sizeOf: sizer(tree.root, [
+            "/home/a": 2 * GB, "/home/.hidden": 1 * GB, "/home/b": GB / 2, "/Applications": 3 * GB], hang: ["/home/slow"]))
+        let r = await scanner.scan(.test(root: tree.root, runner: diskutilOK())) { _, _ in }
+        #expect(r.userData == 2 * GB + 1 * GB + GB / 2 + 3 * GB)
+        #expect(r.userDataIsLowerBound && r.unaccountedIsUpperBound)
+        #expect(r.failures.contains { $0.scannerID == "systemdata.userdata.home.slow" })
+    }
+
+    @Test func homeSymlinkedChildSkipped() async throws {
+        let tree = try FixtureTree()
+        _ = try tree.dir("home/real")
+        try FileManager.default.createSymbolicLink(at: tree.root.appending(path: "home/link"), withDestinationURL: tree.root.appending(path: "home/real"))
+        let scanner = SystemDataScanner(sizeOf: sizer(tree.root, ["/home/real": GB, "/home/link": 5 * GB]))
+        let r = await scanner.scan(.test(root: tree.root, runner: diskutilOK())) { _, _ in }
+        #expect(r.userData == GB)
+        #expect(!r.userDataIsLowerBound)
     }
 
     @Test func restOmittedWhenNamedChildMissing() async throws {

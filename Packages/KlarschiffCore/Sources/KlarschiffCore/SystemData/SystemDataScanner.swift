@@ -51,11 +51,31 @@ public struct SystemDataScanner: Sendable {
                 var f: [ScanFailure] = []
                 var sum: Int64 = 0
                 var lower = false
-                for (id, url) in [("home", ctx.home), ("applications", ctx.absolute("/Applications"))] {
-                    let r = await measure.single(url, id: "userdata.\(id)")
-                    if let s = r.size { sum += s }
-                    if r.size == nil || !r.complete { lower = true }
-                    f += r.failures
+                let app = await measure.single(ctx.absolute("/Applications"), id: "userdata.applications")
+                if let s = app.size { sum += s }
+                if app.size == nil || !app.complete { lower = true }
+                f += app.failures
+                // Home je direktem Unterordner (auch versteckte, keine Symlinks), höchstens 8 gleichzeitig.
+                let children = Measurer.homeChildren(ctx.home)
+                if children.unreadable { lower = true }
+                var next = 0
+                await withTaskGroup(of: (Int64?, Bool, [ScanFailure]).self) { sub in
+                    func add() {
+                        guard next < children.urls.count else { return }
+                        let url = children.urls[next]
+                        next += 1
+                        sub.addTask {
+                            let r = await measure.single(url, id: "userdata.home.\(url.lastPathComponent)")
+                            return (r.size, r.complete, r.failures)
+                        }
+                    }
+                    for _ in 0..<min(8, children.urls.count) { add() }
+                    for await (size, complete, fl) in sub {
+                        if let size { sum += size }
+                        if size == nil || !complete { lower = true }
+                        f += fl
+                        add()
+                    }
                 }
                 return .userData(sum, lower, f)
             }
@@ -184,6 +204,15 @@ private struct Measurer: Sendable {
         case .success(let (s, complete)): return (s, !complete, [])
         case .failure(let e): return (nil, true, [e.failure(id: "systemdata.\(def.id)")])
         }
+    }
+
+    /// Direkte Kinder von Home, ohne Symlinks. `unreadable`: Home selbst war nicht lesbar.
+    static func homeChildren(_ home: URL) -> (urls: [URL], unreadable: Bool) {
+        let fm = FileManager.default
+        guard let names = try? fm.contentsOfDirectory(atPath: home.path) else { return ([], fm.fileExists(atPath: home.path)) }
+        let urls = names.sorted().map { home.appending(path: $0) }
+            .filter { (try? fm.destinationOfSymbolicLink(atPath: $0.path)) == nil }
+        return (urls, false)
     }
 
     func single(_ url: URL, id: String) async -> (size: Int64?, complete: Bool, failures: [ScanFailure]) {

@@ -32,10 +32,10 @@
 
 ## Stand Teilprojekt 2 – Systemdaten (29.10.2026)
 - Tab „Systemdaten“ (Messung des Data-Volumes, Bereichsbaum, „Deine Daten“, nicht zugeordnet, Systemfunde mit Warnung/Bestätigung) umgesetzt; Opt-in-Livetest `liveSystemData` (`KLARSCHIFF_LIVE_SCAN=1`).
-- Live-Messung auf Franks Mac: **37,6 % zugeordnet** (Ziel ≥ 90 %). Ursache: Home-Messung lief in die 120-s-Frist, nicht ein fehlender Katalogbereich. Details: `docs/superpowers/plans/2026-10-29-abnahme.md` (Abschnitt „Teilprojekt 2“).
+- Live-Messung auf Franks Mac: **52,7 % zugeordnet** (Ziel ≥ 90 %; zuvor 37,6 %). Home wird jetzt je Unterordner (max. 8 parallel) gemessen; nur `~/Library` (≈ 56 GB) lief noch in die 120-s-Frist und zählt mit 0. Kein fehlender Katalogbereich. Details: `docs/superpowers/plans/2026-10-29-abnahme.md` (Abschnitt „Teilprojekt 2“).
 
 ### Offen für Frank (TP2)
-- [ ] Home-Frist/Messstrategie entscheiden, erneut messen (Ziel ≥ 90 %).
+- [ ] `~/Library` gesondert messen (Unterordner einzeln oder längere Frist), erneut messen (Ziel ≥ 90 %).
 - [ ] Tab Systemdaten in `--dry-run` ansehen.
 - [ ] Einen Admin-Aufräumfund echt ausführen → genau eine Passwortabfrage; „Ich habe verstanden“ muss den Button freischalten.
 
