@@ -42,11 +42,7 @@ extension AppDependencies {
             trash: { _ in 279_900_000 },
             fullDiskAccess: { false },
             emptyTrash: { _ in RemovalReport(results: [], freedBytes: 0, failures: []) },
-            measureSystemData: { _, _ in
-                SystemDataReport(
-                    measuredAt: Date(), inventory: nil, areas: [], userData: 0, systemAreasTotal: 0, unaccounted: 0,
-                    snapshotFindings: [], cleanupFindings: [], failures: [])
-            },
+            measureSystemData: { _, _ in PreviewSystemData.report },
             dryRun: true,
             terminate: { _ in false })
     }
@@ -172,4 +168,118 @@ private struct PreviewRemover: Remover {
 
 private struct PreviewExecutor: PrivilegedExecutor {
     func run(_ steps: [AdminStep]) async -> AdminRunResult { .cancelled }
+}
+
+/// Fake-Systemdaten in Franks Größenordnungen (Deine Daten 248 GB, AssetsV2 33 GB, `/private/var/db` 7 GB,
+/// Simulator-Volume 18 GB). Erklärungen kurz gehalten; die echten stehen im Katalog.
+private enum PreviewSystemData {
+    static let gb: Int64 = 1_000_000_000
+
+    static func area(_ id: String, _ path: String, _ title: String, _ summary: String, _ verdict: AreaVerdict,
+                     _ size: Int64?, lower: Bool = false, children: [SystemArea] = []) -> SystemArea {
+        SystemArea(id: id, url: URL(filePath: path), title: title, summary: summary, verdict: verdict,
+                   size: size, isLowerBound: lower, children: children)
+    }
+
+    static func cleanup(_ scanner: String, _ title: String, _ explanation: String, method: RemovalMethod,
+                        paths: [(String, Int64)]) -> Finding {
+        let items = paths.map { FindingItem(id: $0.0, url: URL(filePath: $0.0), name: URL(filePath: $0.0).lastPathComponent, size: $0.1) }
+        return Finding(
+            id: FindingID(scannerID: scanner, key: "all"), category: .systemData, title: title,
+            summary: "Achtung: \(SystemCleanup.warning(for: scanner) ?? "") \(explanation)",
+            risk: .review, method: method, items: items, size: items.reduce(0) { $0 + ($1.size ?? 0) },
+            blockingApps: [], keepSuggested: false, commandPreview: items.map { "rm -rf \($0.id)" },
+            needsFullDiskAccess: false)
+    }
+
+    static var report: SystemDataReport {
+        let updateURL = URL(string: "x-apple.systempreferences:com.apple.Software-Update-Settings.extension")!
+        let areas: [SystemArea] = [
+            area("var.folders", "/private/var/folders", "Benutzer-Ordner des Systems",
+                 "Hier legt macOS pro Benutzer Caches und temporäre Dateien ab.", .keep, 12 * gb, children: [
+                    area("var.folders.caches", "/private/var/folders/*/*/C", "Benutzer-Caches (System)",
+                         "Zwischenspeicher von macOS und Programmen. Instruments- und Clang-Caches daraus findest du im Tab Entwickler.",
+                         .keep, 9 * gb),
+                    area("var.folders.temp", "/private/var/folders/*/*/T", "Temporäre Dateien",
+                         "Arbeitsdateien von Programmen.", .cleanable, 2_400_000_000),
+                    area("var.folders.other", "/private/var/folders", "Sonstige Systemordner",
+                         "Alles in „Benutzer-Ordner des Systems“, was nicht zu den Bereichen darüber gehört.", .keep, 600_000_000),
+                 ]),
+            area("var.vm", "/private/var/vm", "Auslagerung & Ruhezustand",
+                 "macOS lagert hier Arbeitsspeicher aus. Bitte nicht anfassen.", .keep, 4 * gb),
+            area("var.db", "/private/var/db", "System-Datenbanken",
+                 "Datenbanken und Protokolle, die macOS im Hintergrund pflegt.", .keep, 7 * gb, lower: true, children: [
+                    area("var.db.diagnostics", "/private/var/db/diagnostics", "Diagnosedaten (Systemprotokoll)",
+                         "Das Systemprotokoll von macOS samt Zuordnungsdateien.", .cleanable, 2_100_000_000),
+                    area("var.db.other", "/private/var/db", "Weitere System-Datenbanken",
+                         "Alles in „System-Datenbanken“, was nicht zu den Bereichen darüber gehört.", .keep, 4_900_000_000, lower: true),
+                 ]),
+            area("library", "/Library", "Systemweite Bibliothek",
+                 "Einstellungen und Komponenten, die für alle Benutzer dieses Macs gelten.", .keep, 9 * gb, children: [
+                    area("library.caches", "/Library/Caches", "Systemweite Caches",
+                         "Zwischenspeicher, den macOS und Apps für alle Benutzer anlegen.", .cleanable, 1_800_000_000),
+                    area("library.logs", "/Library/Logs", "System-Protokolle",
+                         "Protokolldateien von macOS und Programmen.", .cleanable, 700_000_000),
+                    area("developer", "/Library/Developer", "Entwicklerwerkzeuge",
+                         "Command Line Tools und Simulator-Laufzeiten.",
+                         .seeFinding(scannerID: "xcode.libraryDeveloper", tab: .developer), 4_200_000_000),
+                    area("library.other", "/Library", "Systemweite Einstellungen & Komponenten",
+                         "Alles in „Systemweite Bibliothek“, was nicht zu den Bereichen darüber gehört.", .keep, 2_300_000_000),
+                 ]),
+            area("assets", "/System/Volumes/Data/System/Library/AssetsV2", "macOS-Komponenten (Assets)",
+                 "Von macOS nachgeladene Zusatzdaten wie Sprachmodelle, Schriften und Simulator-Laufzeiten.", .keep, 33 * gb, children: [
+                    area("assets.com_apple_MobileAsset_iOSSimulatorRuntime", "/System/Volumes/Data/System/Library/AssetsV2/com_apple_MobileAsset_iOSSimulatorRuntime",
+                         "iOS-Simulator", "Laufzeit für den iOS-Simulator.",
+                         .seeFinding(scannerID: "sim.runtimes", tab: .developer), 21 * gb),
+                    area("assets.com_apple_MobileAsset_MacSoftwareUpdate", "/System/Volumes/Data/System/Library/AssetsV2/com_apple_MobileAsset_MacSoftwareUpdate",
+                         "Heruntergeladenes macOS-Update", "Ein von macOS vorab geladenes Update.", .keep, 8 * gb),
+                    area("assets.com_apple_MobileAsset_UAF_Siri_Understanding", "/System/Volumes/Data/System/Library/AssetsV2/com_apple_MobileAsset_UAF_Siri_Understanding",
+                         "Siri-Sprachdaten", "Sprachmodelle für Siri.", .keep, 4 * gb),
+                 ]),
+            area("opt", "/opt", "Zusatzsoftware", "Programme, die du nachinstalliert hast, zum Beispiel Homebrew.",
+                 .seeFinding(scannerID: "brew.cleanup", tab: .developer), 6 * gb),
+            area("usrlocal", "/usr/local", "Zusatzsoftware (/usr/local)", "Programme und Bibliotheken, die nicht zu macOS gehören.",
+                 .keep, nil, lower: true),
+        ]
+        let systemTotal = areas.reduce(Int64(0)) { $0 + ($1.size ?? 0) }
+        let inventory = VolumeInventoryResult(
+            containerSize: 494_380_000_000, containerFree: 80 * gb,
+            volumes: [
+                APFSVolume(name: "Macintosh HD", role: .system, consumed: 11 * gb),
+                APFSVolume(name: "Preboot", role: .preboot, consumed: 7 * gb),
+                APFSVolume(name: "Recovery", role: .recovery, consumed: 1_300_000_000),
+                APFSVolume(name: "VM", role: .vm, consumed: 4 * gb),
+                APFSVolume(name: "Macintosh HD - Daten", role: .data, consumed: 390 * gb),
+            ],
+            simulatorVolumes: [APFSVolume(name: "iOS 26.0 Simulator", role: .simulator, consumed: 18 * gb)])
+        let userData: Int64 = 248 * gb
+        let tm = Finding(
+            id: FindingID(scannerID: "system.snapshots", key: "timeMachine"), category: .system,
+            title: "Time-Machine-Schnappschüsse", summary: "Lokale Kopien deiner Time-Machine-Sicherung.",
+            risk: .review, method: .admin([]), items: [FindingItem(id: "s1", name: "27.10.2026, 10:15:00")],
+            size: nil, blockingApps: [], keepSuggested: false, commandPreview: [], needsFullDiskAccess: false)
+        let macUpdate = Finding(
+            id: FindingID(scannerID: "sysdata.macUpdate", key: "all"), category: .systemData,
+            title: "Heruntergeladenes macOS-Update",
+            summary: "Installiere das Update oder warte – macOS räumt die Datei selbst weg.",
+            risk: .hintOnly, method: .hint(.openURL(updateURL)), items: [], size: 8 * gb,
+            blockingApps: [], keepSuggested: false, commandPreview: [], needsFullDiskAccess: false)
+        return SystemDataReport(
+            measuredAt: Date(), inventory: inventory, areas: areas, userData: userData,
+            systemAreasTotal: systemTotal, unaccounted: max(0, 390 * gb - userData - systemTotal),
+            unaccountedIsUpperBound: true, snapshotFindings: [tm],
+            cleanupFindings: [
+                cleanup("sysdata.temp", "Alte temporäre Dateien", "Nur dein eigener temporärer Ordner.",
+                        method: .delete, paths: [("/private/var/folders/xy/abc/T/alt.tmp", 1_200_000_000)]),
+                cleanup("sysdata.libraryCaches", "Systemweite Caches", "Je Ordner ein Admin-Schritt.",
+                        method: .admin([]), paths: [("/Library/Caches/com.example.cache", 1_500_000_000)]),
+                cleanup("sysdata.libraryLogs", "Alte System-Protokolle", "Nur Dateien älter als 30 Tage.",
+                        method: .admin([]), paths: [("/Library/Logs/DiagnosticReports/alt.ips", 300_000_000)]),
+                cleanup("sysdata.unifiedLog", "Diagnosedaten", "Braucht dein Admin-Passwort.",
+                        method: .admin([]), paths: [("/private/var/db/diagnostics", 2_100_000_000)]),
+                macUpdate,
+            ],
+            failures: [ScanFailure(scannerID: "systemdata.unaccounted",
+                message: "Einige Bereiche konnten nicht vollständig gemessen werden – „nicht zugeordnet“ ist daher eher zu hoch.")])
+    }
 }

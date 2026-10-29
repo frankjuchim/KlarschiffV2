@@ -84,7 +84,10 @@ struct RootView: View {
         case .storage, .developer:
             CleanupTabView(tab: model.selectedTab)
                 .environment(model)
-        case .systemData, .services, .performance:
+        case .systemData:
+            SystemDataTabView()
+                .environment(model)
+        case .services, .performance:
             PlaceholderTab(tab: model.selectedTab)
         }
     }

@@ -65,7 +65,7 @@ private struct CategoryGroup: Identifiable {
 }
 
 /// Schließbares Fehler-Banner für `AppModel.lastError`.
-private struct ErrorBanner: View {
+struct ErrorBanner: View {
     let message: String
     let onDismiss: () -> Void
 

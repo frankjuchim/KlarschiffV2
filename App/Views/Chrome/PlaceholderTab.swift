@@ -24,10 +24,9 @@ struct PlaceholderTab: View {
 
     static func text(for tab: AppTab) -> String {
         switch tab {
-        case .systemData: "Kommt bald: Hier erklärt Klarschiff 2, woraus ‚Systemdaten‘ besteht."
         case .services: "Kommt bald: Hier siehst du, welche Hintergrunddienste und Agents laufen – und kannst aufräumen."
         case .performance: "Kommt bald: Tipps und Werkzeuge, damit dein Mac wieder flott läuft."
-        case .storage, .developer: ""
+        case .storage, .developer, .systemData: ""
         }
     }
 }

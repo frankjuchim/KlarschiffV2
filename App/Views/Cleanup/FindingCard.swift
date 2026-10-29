@@ -6,6 +6,8 @@ import KlarschiffCore
 /// „Nur Hinweis“-Karten haben statt des Auswahlkreises einen Aktionsknopf.
 struct FindingCard: View {
     let finding: Finding
+    /// Abweichender Beschreibungstext (z. B. ohne die rot darüber stehende Warnzeile); nil = `finding.summary`.
+    var summaryText: String? = nil
     @Environment(AppModel.self) private var model
     @State private var expanded = false
     @State private var showCommand = false
@@ -28,8 +30,8 @@ struct FindingCard: View {
                 }
                 VStack(alignment: .leading, spacing: 6) {
                     titleRow
-                    if !finding.summary.isEmpty {
-                        Text(finding.summary)
+                    if !(summaryText ?? finding.summary).isEmpty {
+                        Text(summaryText ?? finding.summary)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
