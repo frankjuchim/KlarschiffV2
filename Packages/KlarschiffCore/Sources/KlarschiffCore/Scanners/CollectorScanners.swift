@@ -9,7 +9,7 @@ private func isSymlink(_ url: URL) -> Bool {
 
 public struct AppStoreCachesScanner: Scanner {
     public let id = "appCaches.appStore"
-    public var phase: ScannerPhase { .collector }
+    public var phase: ScannerPhase { .lateCollector }
     let appName: @Sendable (String) -> String?
 
     /// `appName` nil: Produktion über `NSWorkspace` + `FileManager.displayName`.
@@ -61,7 +61,7 @@ public struct AppStoreCachesScanner: Scanner {
 
 public struct OtherCachesScanner: Scanner {
     public let id = "appCaches.other"
-    public var phase: ScannerPhase { .collector }
+    public var phase: ScannerPhase { .lateCollector }
     public init() {}
 
     static let excluded: Set<String> = [

@@ -3,6 +3,41 @@ import Foundation
 @testable import KlarschiffCore
 
 struct CollectorScannerTests {
+    @Test func cacheCollectorsRunAfterLeftovers() {
+        #expect(LeftoverAppDataScanner(isInstalled: { _ in false }).phase == .collector)
+        #expect(OtherCachesScanner().phase == .lateCollector)
+        #expect(AppStoreCachesScanner(appName: { _ in nil }).phase == .lateCollector)
+    }
+
+    @Test func uninstalledAppCacheAppearsOnlyInLeftovers() async throws {
+        let t = try FixtureTree()
+        try t.file("home/Library/Caches/com.foo.bar/blob", bytes: 11_000_000)
+        try t.file("home/Library/Caches/com.live.app/x", bytes: 1000)
+        let engine = ScanEngine(scanners: [OtherCachesScanner(), LeftoverAppDataScanner(isInstalled: { $0 == "com.live.app" })])
+        let ctx = ScanContext.test(root: t.root)
+        let r = await engine.run(ctx, progress: { _, _ in })
+        let path = ctx.homePath("Library/Caches/com.foo.bar").path
+        let leftovers = try #require(r.findings.first { $0.id.scannerID == "apps.leftovers" })
+        let other = try #require(r.findings.first { $0.id.scannerID == "appCaches.other" })
+        #expect(leftovers.items.map(\.id) == [path])
+        #expect(other.items.map(\.name) == ["com.live.app"])
+    }
+
+    @Test func containerLeftoverCachesNotInAppStoreCaches() async throws {
+        let t = try FixtureTree()
+        try t.file("home/Library/Containers/com.gone.app/Data/Library/Caches/blob/x", bytes: 11_000_000)
+        try t.file("home/Library/Containers/com.live.app/Data/Library/Caches/c/x", bytes: 1000)
+        let engine = ScanEngine(scanners: [
+            AppStoreCachesScanner(appName: { _ in nil }), LeftoverAppDataScanner(isInstalled: { $0 == "com.live.app" }),
+        ])
+        let ctx = ScanContext.test(root: t.root)
+        let r = await engine.run(ctx, progress: { _, _ in })
+        let leftovers = try #require(r.findings.first { $0.id.scannerID == "apps.leftovers" })
+        let store = try #require(r.findings.first { $0.id.scannerID == "appCaches.appStore" })
+        #expect(leftovers.items.map(\.id) == [ctx.homePath("Library/Containers/com.gone.app").path])
+        #expect(store.items.map(\.name) == ["com.live.app – c"])
+    }
+
     @Test func otherCachesSkipClaimedAndSystemSpecials() async throws {
         let t = try FixtureTree()
         try t.file("home/Library/Caches/com.spotify.client/x", bytes: 1000)
@@ -18,7 +53,7 @@ struct CollectorScannerTests {
         #expect(fs[0].items.map(\.name) == ["com.spotify.client"])
         #expect(fs[0].risk == .safe && fs[0].method == .trash && fs[0].category == .appCaches)
         #expect(fs[0].commandPreview == ["In den Papierkorb: \(ctx.homePath("Library/Caches/com.spotify.client").path)"])
-        #expect(scanner.phase == .collector)
+        #expect(scanner.phase == .lateCollector)
     }
 
     @Test func otherCachesBlockOnItemLevelOnly() async throws {
@@ -59,7 +94,7 @@ struct CollectorScannerTests {
         #expect(fs[0].id == FindingID(scannerID: "appCaches.appStore", key: "all"))
         #expect(fs[0].items.map(\.name) == ["com.bar.app – zzz", "Foo – free"])
         #expect(fs[0].needsFullDiskAccess && fs[0].risk == .safe && fs[0].method == .trash)
-        #expect(scanner.phase == .collector)
+        #expect(scanner.phase == .lateCollector)
     }
 
     @Test func appStoreCachesNoAccessWithoutFullDiskAccess() async throws {

@@ -261,7 +261,26 @@ private func item(_ id: String, _ url: URL?, size: Int64? = 10) -> FindingItem {
         let fnd = finding(.tool([cmd], fallback: nil), items: [item("foo", nil)])
         let r = await ToolRemover(runner: runner, tools: tools).remove(fnd, items: fnd.items, dryRun: false)
         #expect(r[0].outcome == .failed("Homebrew vertraut diesem Tap nicht. Führe nacheinander aus: brew trust acme/tools · brew uninstall --cask foo · brew untap acme/tools"))
-        #expect(runner.environments.first == ToolLocator.brewEnvironment)
+        #expect(runner.environments.first == tools.environment(for: "/opt/homebrew/bin/brew", base: ToolLocator.brewEnvironment))
+        #expect(runner.environments.first?["HOMEBREW_NO_AUTO_UPDATE"] == "1")
+    }
+
+    @Test func toolRemoverPassesPathForEveryTool() async throws {
+        let runner = FakeCommandRunner()
+        let locator = ToolLocator(searchPaths: ["/opt/homebrew/bin", "/Users/x/.cargo/bin"],
+                                  fileExists: { $0 == "/opt/homebrew/bin/npm" })
+        runner.stub("/opt/homebrew/bin/npm", ["cache", "clean", "--force"], result: CommandResult(exitCode: 0, stdout: "", stderr: ""))
+        runner.stub("/usr/bin/xcrun", ["simctl", "delete", "unavailable"], result: CommandResult(exitCode: 0, stdout: "", stderr: ""))
+        let cmds = [ToolCommand(tool: "npm", arguments: ["cache", "clean", "--force"], timeout: .seconds(5)),
+                    ToolCommand(tool: "xcrun", arguments: ["simctl", "delete", "unavailable"], timeout: .seconds(5))]
+        let fnd = finding(.tool(cmds, fallback: nil), items: [item("x", nil)])
+        let r = await ToolRemover(runner: runner, tools: locator).remove(fnd, items: fnd.items, dryRun: false)
+        #expect(r.map(\.outcome) == [.removed(freed: 10)])
+        #expect(runner.environments.map { $0["PATH"] } == [
+            "/opt/homebrew/bin:/Users/x/.cargo/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+            "/usr/bin:/opt/homebrew/bin:/Users/x/.cargo/bin:/bin:/usr/sbin:/sbin",
+        ])
+        #expect(runner.environments.allSatisfy { $0.count == 1 })
     }
 
     @Test func toolRemoverRunsSequentiallyAndStopsAtFailure() async throws {

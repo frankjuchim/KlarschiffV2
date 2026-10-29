@@ -1,7 +1,7 @@
 import Foundation
 
 private func runBrew(_ ctx: ScanContext, _ brew: String, _ args: [String]) async throws -> String {
-    let result = try await ctx.runner.run(brew, args, timeout: .seconds(120), environment: ToolLocator.brewEnvironment)
+    let result = try await ctx.runner.run(brew, args, timeout: .seconds(120), environment: ctx.tools.environment(for: brew, base: ToolLocator.brewEnvironment))
     guard result.succeeded else {
         let excerpt = String(result.stderr.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200))
         throw CommandError.launchFailed("brew \(args.joined(separator: " ")): Exit \(result.exitCode) \(excerpt)")

@@ -31,8 +31,10 @@ public struct RemovalPlan: Sendable {
         for finding in findings {
             if case .hint = finding.method { continue }
             guard let selected = selection[finding.id], !selected.isEmpty else { continue }
-            let items = finding.items.filter { selected.contains($0.id) }
+            var items = finding.items.filter { selected.contains($0.id) }
             guard !items.isEmpty else { continue }
+            // Werkzeug-Befehle wirken immer auf den ganzen Fund: jede Auswahl umfasst alle Items.
+            if case .tool = finding.method { items = finding.items }
             totalSize += items.reduce(0) { $0 + ($1.size ?? 0) }
 
             switch finding.method {

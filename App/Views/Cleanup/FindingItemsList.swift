@@ -6,6 +6,7 @@ import KlarschiffCore
 struct FindingItemsList: View {
     let finding: Finding
     /// Ob Einträge einzeln auswählbar sind (nicht bei Hinweisen oder fehlendem Vollzugriff).
+    /// Werkzeug-Funde sind nie einzeln wählbar: ihre Befehle wirken auf alle Einträge.
     let selectable: Bool
 
     var body: some View {
@@ -22,7 +23,7 @@ struct FindingItemsList: View {
     private var rows: some View {
         LazyVStack(alignment: .leading, spacing: 8) {
             ForEach(finding.items) { item in
-                ItemRow(findingID: finding.id, item: item, selectable: selectable)
+                ItemRow(findingID: finding.id, item: item, selectable: selectable && !AppModel.isTool(finding))
             }
         }
     }

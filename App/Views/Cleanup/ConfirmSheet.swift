@@ -68,7 +68,7 @@ struct ConfirmSheet: View {
                     Label("Aufräumen", systemImage: "sparkles")
                 }
                 .buttonStyle(GradientButtonStyle())
-                .keyboardShortcut(.defaultAction)
+                .keyboardShortcut(Self.allowsDefaultAction(plan) ? .defaultAction : nil)
                 .disabled(groups.isEmpty || model.isScanning || model.isRemoving)
             }
         }
@@ -77,6 +77,11 @@ struct ConfirmSheet: View {
         .sheet(isPresented: $showCommands) {
             CommandSheet(title: "Befehle zum Aufräumen", lines: plan.commandPreview)
         }
+    }
+
+    /// Return löst „Aufräumen“ nur aus, wenn nichts endgültig gelöscht wird und keine Admin-Schritte anstehen.
+    nonisolated static func allowsDefaultAction(_ plan: RemovalPlan) -> Bool {
+        plan.deleteSteps.isEmpty && plan.adminSteps.isEmpty
     }
 
     // MARK: - Optionen

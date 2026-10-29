@@ -51,9 +51,11 @@ public struct BigChunksScanner: Sendable {
                     if let sizeOf { size = try await sizeOf(url) } else { size = try await ctx.sizer.size(of: url) }
                 } catch { continue }
                 guard size > Self.threshold else { continue }
+                // Überlappende Funde (z. B. TeX komplett + Jahrgänge) können mehr als den Ordner melden.
+                let claimed = await ctx.claims.claimedSize(under: url, findings: cleanable)
                 chunks.append(BigChunk(
                     url: url, displayName: FileManager.default.displayName(atPath: url.path), size: size,
-                    cleanableSize: await ctx.claims.claimedSize(under: url, findings: cleanable)))
+                    cleanableSize: min(claimed, size)))
             }
         }
         return chunks.sorted { $0.size > $1.size }

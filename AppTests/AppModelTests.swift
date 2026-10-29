@@ -217,6 +217,41 @@ private func makeModel(
     #expect(model.selection[review.id] == nil)
 }
 
+@Test @MainActor func toolFindingIsAllOrNothing() async {
+    let app = AppRef(bundleID: "com.example.app", processName: nil, displayName: "Beispiel")
+    let cmd = ToolCommand(tool: "brew", arguments: ["cleanup"], timeout: .seconds(5))
+    let tool = finding("t", category: .homebrew, risk: .review,
+                       items: [item("a", size: 1), item("b", size: 2, blocking: app)],
+                       method: .tool([cmd], fallback: nil))
+    let model = makeModel([tool])
+    await model.scan(includeSlowChecks: false)
+    #expect(model.selection[tool.id] == nil)
+
+    model.toggleItem(tool.id, item: "a")
+    #expect(model.selection[tool.id] == nil)
+    model.toggle(tool.id)
+    #expect(model.selection[tool.id] == ["a", "b"])
+    model.toggleItem(tool.id, item: "a")
+    #expect(model.selection[tool.id] == ["a", "b"])
+    model.toggle(tool.id)
+    #expect(model.selection[tool.id] == nil)
+}
+
+@Test func confirmDefaultActionOnlyWithoutDeleteOrAdmin() {
+    func f(_ key: String, _ method: RemovalMethod) -> Finding {
+        finding(key, category: .appCaches, risk: .safe, items: [item(key, size: 1)], method: method)
+    }
+    let cmd = ToolCommand(tool: "brew", arguments: ["cleanup"], timeout: .seconds(5))
+    let step = AdminStep(executable: "/bin/rm", arguments: ["-rf", "/usr/local/texlive/2022"])
+    func plan(_ fs: [Finding]) -> RemovalPlan {
+        RemovalPlan(findings: fs, selection: Dictionary(uniqueKeysWithValues: fs.map { ($0.id, Set($0.items.map(\.id))) }),
+                    options: RemovalOptions())
+    }
+    #expect(ConfirmSheet.allowsDefaultAction(plan([f("t", .trash), f("x", .tool([cmd], fallback: nil))])))
+    #expect(!ConfirmSheet.allowsDefaultAction(plan([f("t", .trash), f("d", .delete)])))
+    #expect(!ConfirmSheet.allowsDefaultAction(plan([f("a", .admin([step]))])))
+}
+
 @Test @MainActor func dryRunForcedIntoPlan() async {
     let safe = finding("safe", category: .appCaches, risk: .safe, items: [item("a", size: 10)])
     let dev = finding("dev", category: .xcode, risk: .safe, items: [item("b", size: 7)])

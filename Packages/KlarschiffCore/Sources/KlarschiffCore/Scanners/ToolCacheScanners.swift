@@ -1,7 +1,7 @@
 import Foundation
 
 private func runTool(_ ctx: ScanContext, _ path: String, name: String, _ args: [String]) async throws -> String {
-    let result = try await ctx.runner.run(path, args, timeout: .seconds(120), environment: [:])
+    let result = try await ctx.runner.run(path, args, timeout: .seconds(120), environment: ctx.tools.environment(for: path, base: [:]))
     guard result.succeeded else {
         let excerpt = String(result.stderr.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200))
         throw CommandError.launchFailed("\(name) \(args.joined(separator: " ")): Exit \(result.exitCode) \(excerpt)")

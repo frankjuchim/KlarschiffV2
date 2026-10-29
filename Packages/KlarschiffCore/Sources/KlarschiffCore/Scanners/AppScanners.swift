@@ -9,6 +9,10 @@ private func bundleID(of app: URL) -> String? {
     return id
 }
 
+private func isXcodeApp(_ name: String) -> Bool {
+    name.hasPrefix("Xcode") && name.hasSuffix(".app")
+}
+
 private func isRealDirectory(_ url: URL) -> Bool {
     (try? FileManager.default.attributesOfItem(atPath: url.path))?[.type] as? FileAttributeType == .typeDirectory
 }
@@ -32,7 +36,8 @@ public struct UnusedAppsScanner: Scanner {
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else { return [] }
         let cutoff = ctx.now.addingTimeInterval(-180 * 86_400)
         var items: [FindingItem] = []
-        for name in names.sorted() where name.hasSuffix(".app") && !name.hasPrefix(".") {
+        // Xcode-Versionen deckt `ExtraXcodeScanner` ab.
+        for name in names.sorted() where name.hasSuffix(".app") && !name.hasPrefix(".") && !isXcodeApp(name) {
             try Task.checkCancellation()
             let url = dir.appending(path: name)
             guard isRealDirectory(url), let bid = bundleID(of: url),
@@ -122,11 +127,15 @@ public struct ExtraXcodeScanner: Scanner {
         }
         let dir = ctx.absolute("/Applications")
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else { return [] }
+        let xcodes = names.sorted().filter { isXcodeApp($0) && isRealDirectory(dir.appending(path: $0)) }
+        // Ohne gewähltes Xcode (Command Line Tools oder Fehler): Xcode.app gilt als aktiv, sonst eine einzige Version.
+        if activeApp == nil {
+            activeApp = xcodes.contains("Xcode.app") ? "Xcode.app" : (xcodes.count == 1 ? xcodes[0] : nil)
+        }
         var findings: [Finding] = []
-        for name in names.sorted() where name.hasPrefix("Xcode") && name.hasSuffix(".app") && name != activeApp {
+        for name in xcodes where name != activeApp {
             try Task.checkCancellation()
             let url = dir.appending(path: name)
-            guard isRealDirectory(url) else { continue }
             let size = try? await ctx.sizer.size(of: url)
             let items = [FindingItem(id: url.path, url: url, name: name, size: size)]
             findings.append(Finding(

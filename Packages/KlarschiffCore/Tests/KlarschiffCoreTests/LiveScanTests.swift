@@ -21,7 +21,7 @@ struct LiveScanTests {
         let seconds = Int(Date().timeIntervalSince(started))
 
         var md = "# Live-Scan (nur lesend)\n\n"
-        md += "Dauer: \(seconds) s, Volle Festplattenzugriff: \(ctx.hasFullDiskAccess ? "ja" : "nein"), Funde: \(report.findings.count), Fehler: \(report.failures.count)\n\n"
+        md += "Dauer: \(seconds) s, Voller Festplattenzugriff: \(ctx.hasFullDiskAccess ? "ja" : "nein"), Funde: \(report.findings.count), Fehler: \(report.failures.count)\n\n"
         md += "## Funde\n\n| Tab | Kategorie | Titel | Risiko | Methode | Größe | keepSuggested | blockiert |\n|---|---|---|---|---|---|---|---|\n"
         for f in report.findings.sorted(by: { ($0.size ?? 0) > ($1.size ?? 0) }) {
             let size = f.size.map { ByteFormat.string($0) } ?? "–"

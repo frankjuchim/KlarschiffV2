@@ -106,6 +106,18 @@ struct CatalogTests {
         #expect(f.summary.contains("~12 GB"))
     }
 
+    /// Versionsordner gehören allein dem VersionedDirScanner – keine PathRule darf sie doppelt melden.
+    @Test func noPathRuleCoversVersionedDirectories() {
+        let versioned = Catalog.allScanners().compactMap { $0 as? VersionedDirScanner }
+        #expect(versioned.count == 4)
+        for v in versioned {
+            for r in Catalog.pathRules() where r.base == v.base {
+                #expect(!r.patterns.contains { $0.hasPrefix(v.parent) }, "\(r.id) überschneidet \(v.id)")
+            }
+        }
+        #expect(Catalog.rule("languages.ruby").patterns == [".gem/*"])
+    }
+
     @Test func specValuesForSelectedRules() {
         let xcodeApps = Catalog.rule("xcode.derivedData").blockingApps
         #expect(xcodeApps.map(\.displayName) == ["Xcode", "Instruments", "xctrace", "instruments"])

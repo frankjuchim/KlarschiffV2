@@ -54,6 +54,20 @@ private struct HangingScanner: KlarschiffCore.Scanner {
         #expect(r.findings.map(\.id.scannerID) == ["spec", "coll"])
     }
 
+    @Test func lateCollectorSkipsPathsClaimedByCollector() async {
+        let collector = StubScanner.one(id: "coll", phase: .collector, urls: ["/x/a"])
+        let late = StubScanner(id: "late", phase: .lateCollector) { ctx in
+            var out: [Finding] = []
+            for p in ["/x/a/sub", "/x/b"] where !(await ctx.claims.isClaimed(URL(filePath: p))) {
+                out.append(finding("late", key: p, urls: [p]))
+            }
+            return out
+        }
+        let r = await ScanEngine(scanners: [late, collector]).run(.test(), progress: { _, _ in })
+        #expect(r.findings.map(\.id.scannerID) == ["coll", "late"])
+        #expect(r.findings.flatMap(\.items).map(\.id) == ["/x/a", "/x/b"])
+    }
+
     @Test func failingScannerBecomesFailure() async {
         let r = await ScanEngine(scanners: [ThrowingScanner(id: "kaputt"), StubScanner.one(id: "ok")])
             .run(.test(), progress: { _, _ in })
@@ -108,11 +122,12 @@ private struct HangingScanner: KlarschiffCore.Scanner {
         let calls = Mutex<[[Int]]>([])
         _ = await ScanEngine(scanners: [
             StubScanner.one(id: "a"), StubScanner.one(id: "b", phase: .collector), ThrowingScanner(id: "c"),
+            StubScanner.one(id: "d", phase: .lateCollector),
         ]).run(.test(), progress: { c, t in calls.withLock { $0.append([c, t]) } })
         let v = calls.withLock { $0 }
-        #expect(v.count == 3)
-        #expect(v.map { $0[0] } == [1, 2, 3])
-        #expect(v.allSatisfy { $0[1] == 3 })
+        #expect(v.count == 4)
+        #expect(v.map { $0[0] } == [1, 2, 3, 4])
+        #expect(v.allSatisfy { $0[1] == 4 })
     }
 
     @Test func fakeRunningAppsMatchesBundleOrProcess() {

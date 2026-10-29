@@ -2,7 +2,6 @@ import Foundation
 import Observation
 import KlarschiffCore
 
-/// Alles, was `AppModel` von außen braucht – in Tests durch Attrappen ersetzbar.
 enum TrashError: Error, Equatable {
     case unreadable
 }
@@ -15,6 +14,7 @@ enum AppErrorText {
     static let dryRunPlan = "Trockenlauf aktiv – ein Plan ohne Trockenlauf wurde nicht ausgeführt."
 }
 
+/// Alles, was `AppModel` von außen braucht – in Tests durch Attrappen ersetzbar.
 struct AppDependencies: Sendable {
     var engine: ScanEngine
     var keepList: KeepList
@@ -190,8 +190,9 @@ final class AppModel {
         }
     }
 
+    /// Werkzeug-Funde sind ganz oder gar nicht wählbar – ihre Befehle wirken auf alle Items.
     func toggleItem(_ id: FindingID, item: String) {
-        guard let f = findingsByID[id], !Self.isHint(f), !kept.contains(id),
+        guard let f = findingsByID[id], !Self.isHint(f), !Self.isTool(f), !kept.contains(id),
               f.items.contains(where: { $0.id == item }) else { return }
         var ids = selection[id] ?? []
         if ids.contains(item) { ids.remove(item) } else { ids.insert(item) }
@@ -320,8 +321,15 @@ final class AppModel {
         return false
     }
 
+    nonisolated static func isTool(_ f: Finding) -> Bool {
+        if case .tool = f.method { return true }
+        return false
+    }
+
+    /// Werkzeug-Funde: alle Items (der Runner überspringt den ganzen Fund, falls eine App blockiert).
     private static func selectableItemIDs(_ f: Finding) -> Set<String> {
-        Set(f.items.filter { $0.blockingApp == nil }.map(\.id))
+        if isTool(f) { return Set(f.items.map(\.id)) }
+        return Set(f.items.filter { $0.blockingApp == nil }.map(\.id))
     }
 }
 

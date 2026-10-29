@@ -18,6 +18,20 @@ public struct ToolLocator: Sendable {
         return nil
     }
 
+    /// Umgebung für ein aufgelöstes Werkzeug: `base` plus `PATH` aus Werkzeug-Ordner, Suchpfaden und Systempfaden.
+    /// Aus der GUI gestartet fehlt sonst ein brauchbarer `PATH` (z. B. `#!/usr/bin/env node` bei Homebrew-npm).
+    public func environment(for toolPath: String, base: [String: String]) -> [String: String] {
+        let home = NSHomeDirectory()
+        let toolDir = (toolPath as NSString).deletingLastPathComponent
+        let expanded = searchPaths.map { $0.hasPrefix("~") ? home + $0.dropFirst() : $0 }
+        var seen = Set<String>()
+        let dirs = ([toolDir] + expanded + ["/usr/bin", "/bin", "/usr/sbin", "/sbin"])
+            .filter { !$0.isEmpty && seen.insert($0).inserted }
+        var env = base
+        env["PATH"] = dirs.joined(separator: ":")
+        return env
+    }
+
     public static let defaultSearchPaths: [String] = {
         let fixed = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
         let home = ["~/.cargo/bin", "~/go/bin", "/opt/anaconda3/bin", "/opt/miniconda3/bin",

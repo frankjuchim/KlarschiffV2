@@ -36,7 +36,8 @@ public struct ScanEngine: Sendable {
         var findings: [Finding] = []
         var failures: [ScanFailure] = []
 
-        for phase in [ScannerPhase.specific, .collector] {
+        // Phasen in Reihenfolge; nach jeder Phase gelten ihre Item-Pfade als belegt, damit spätere Sammler nichts doppelt zählen.
+        for phase in [ScannerPhase.specific, .collector, .lateCollector] {
             let batch = scanners.filter { $0.phase == phase }
             let timeout = perScannerTimeout
             var results: [(Int, Result<[Finding], ScanFailure>)] = []
@@ -59,9 +60,7 @@ public struct ScanEngine: Sendable {
                     failures.append(f)
                 }
             }
-            if phase == .specific {
-                await ctx.claims.claim(phaseFindings.flatMap(\.items).compactMap(\.url))
-            }
+            await ctx.claims.claim(phaseFindings.flatMap(\.items).compactMap(\.url))
             findings += phaseFindings
         }
         return ScanReport(findings: findings, failures: failures)

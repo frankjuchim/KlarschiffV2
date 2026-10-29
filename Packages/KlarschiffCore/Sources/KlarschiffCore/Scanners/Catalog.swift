@@ -334,9 +334,9 @@ public enum Catalog {
             risk: .safe, method: .tool([tool("go", "clean", "-cache")], fallback: .delete)),
         PathRule(
             id: "languages.ruby", category: .languages,
-            title: "Ruby-Gems und -Versionen",
-            summary: "Installierte Gems und über rbenv installierte Ruby-Versionen. Prüfe, ob deine Projekte sie noch brauchen. Deine RubyGems-Zugangsdaten bleiben unangetastet.",
-            base: .home, patterns: [".gem/*", ".rbenv/versions/*"],
+            title: "Ruby-Gems",
+            summary: "Installierte Gems. Prüfe, ob deine Projekte sie noch brauchen. Deine RubyGems-Zugangsdaten bleiben unangetastet. Über rbenv installierte Ruby-Versionen findest du als eigene Funde.",
+            base: .home, patterns: [".gem/*"],
             risk: .review, method: .trash, excludeNames: ["credentials"]),
         PathRule(
             id: "languages.testBrowsers", category: .languages,

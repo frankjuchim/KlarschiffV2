@@ -18,6 +18,18 @@ struct ToolLocatorTests {
         #expect(ToolLocator.brewEnvironment.count == 3)
     }
 
+    @Test func environmentBuildsPathFromToolDirAndSearchPaths() {
+        let l = ToolLocator(searchPaths: ["/opt/homebrew/bin", "/usr/bin", "~/.cargo/bin"], fileExists: { _ in true })
+        let env = l.environment(for: "/opt/homebrew/Cellar/node/22/bin/npm", base: ["HOMEBREW_NO_AUTO_UPDATE": "1"])
+        let h = NSHomeDirectory()
+        #expect(env["PATH"] == "/opt/homebrew/Cellar/node/22/bin:/opt/homebrew/bin:/usr/bin:\(h)/.cargo/bin:/bin:/usr/sbin:/sbin")
+        #expect(env["HOMEBREW_NO_AUTO_UPDATE"] == "1")
+        #expect(env.count == 2)
+        // Werkzeug liegt in einem Suchpfad: kein doppelter Eintrag.
+        #expect(l.environment(for: "/usr/bin/xcrun", base: [:])["PATH"]
+                == "/usr/bin:/opt/homebrew/bin:\(h)/.cargo/bin:/bin:/usr/sbin:/sbin")
+    }
+
     @Test func xcrunUnavailableWithOnlyCommandLineTools() async {
         let fake = FakeCommandRunner()
         fake.stub("/usr/bin/xcode-select", ["-p"], result: .init(exitCode: 0, stdout: "/Library/Developer/CommandLineTools\n", stderr: ""))

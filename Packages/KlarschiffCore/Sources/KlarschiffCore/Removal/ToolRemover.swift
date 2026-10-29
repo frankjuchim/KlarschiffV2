@@ -30,7 +30,7 @@ public struct ToolRemover: Remover {
             default: exe = tools.path(for: command.tool)
             }
             guard let exe else { return .failed("Werkzeug nicht gefunden: \(command.tool)") }
-            let env = command.tool == "brew" ? ToolLocator.brewEnvironment : [:]
+            let env = tools.environment(for: exe, base: command.tool == "brew" ? ToolLocator.brewEnvironment : [:])
             do {
                 let r = try await runner.run(exe, command.arguments, timeout: command.timeout, environment: env)
                 if r.exitCode != 0 {

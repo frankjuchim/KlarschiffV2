@@ -31,6 +31,18 @@ struct BigChunksScannerTests {
         #expect(chunks[1].cleanableSize == 0)
     }
 
+    @Test func cleanableSizeNeverExceedsChunkSize() async throws {
+        let t = try FixtureTree()
+        try t.dir("opt/texlive")
+        let ctx = ScanContext.test(root: t.root)
+        // Überlappende Funde (TeX komplett + einzelne Jahrgänge) zählen dieselben Bytes doppelt.
+        let whole = finding(risk: .review, url: ctx.absolute("/opt/texlive"), size: 6_000_000_000)
+        let year = finding(risk: .review, url: ctx.absolute("/opt/texlive/2023"), size: 4_000_000_000)
+        let chunks = await BigChunksScanner(sizeOf: stub(["texlive": 6_000_000_000])).scan(ctx, findings: [whole, year])
+        #expect(chunks.map(\.size) == [6_000_000_000])
+        #expect(chunks[0].cleanableSize == 6_000_000_000)
+    }
+
     @Test func hintOnlyFindingsAreNotCleanableAndLibraryIsSkipped() async throws {
         let t = try FixtureTree()
         try t.dir("home/Library/Application Support/Claude")

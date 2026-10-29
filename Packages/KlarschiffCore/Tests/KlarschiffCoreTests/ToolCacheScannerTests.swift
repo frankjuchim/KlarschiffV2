@@ -26,6 +26,8 @@ import Foundation
         #expect(f.blockingApps.isEmpty)
         #expect(fs.first { $0.id.key == "nomic-embed-text:latest" }?.size == 274_000_000)
         #expect(fs.allSatisfy { !$0.commandPreview.joined().contains("#") })
+        #expect(!fake.environments.isEmpty)
+        #expect(fake.environments.allSatisfy { $0["PATH"] == "/fake/bin:/usr/bin:/bin:/usr/sbin:/sbin" })
     }
 
     @Test func ollamaFallsBackToDeleteWithoutCli() async throws {
@@ -97,6 +99,7 @@ import Foundation
         #expect(nightly.method == .tool([cmd], fallback: nil))
         #expect(nightly.items.first?.url == tree.root.appending(path: "home/.rustup/toolchains/nightly-aarch64-apple-darwin"))
         #expect((nightly.size ?? 0) >= 1000)
+        #expect(fake.environments.map { $0["PATH"] } == ["/fake/bin:/usr/bin:/bin:/usr/sbin:/sbin"])
     }
 
     @Test func rustupParsesActiveMarkers() {

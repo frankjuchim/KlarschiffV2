@@ -195,6 +195,36 @@ private let adminStep = AdminStep(executable: "/bin/rm", arguments: ["-rf", "/us
         #expect(msg.contains("brew uninstall --cask foo ·"))
     }
 
+    @Test func partialSelectionOfToolFindingPlansAllItems() {
+        let f = finding("x", .tool([toolCmd], fallback: nil), items: [item("i1"), item("i2"), item("i3")])
+        let p = RemovalPlan(findings: [f], selection: [f.id: ["i2"]], options: RemovalOptions())
+        #expect(p.toolSteps.count == 1)
+        #expect(p.toolSteps[0].1.map(\.id) == ["i1", "i2", "i3"])
+        #expect(p.totalSize == 300)
+        #expect(p.commandPreview == ["brew uninstall --cask foo"])
+    }
+
+    @Test func selectedSubsetReachesTrashAndDeleteRemoverExactly() async throws {
+        let rig = try Rig()
+        let t = finding("t", .trash, items: [item("t1"), item("t2"), item("t3")])
+        let d = finding("d", .delete, items: [item("d1"), item("d2"), item("d3")])
+        let p = RemovalPlan(findings: [t, d], selection: [t.id: ["t1", "t3"], d.id: ["d2"]], options: RemovalOptions())
+        _ = await rig.runner.run(p) { _ in }
+        #expect(rig.trash.calls.map(\.1) == [["t1", "t3"]])
+        #expect(rig.delete.calls.map(\.1) == [["d2"]])
+    }
+
+    @Test func selectedSubsetReachesAdminExactly() async throws {
+        let rig = try Rig(adminResult: .completed([0]))
+        let s2 = AdminStep(executable: "/bin/rm", arguments: ["-rf", "/usr/local/texlive/2023"])
+        let s3 = AdminStep(executable: "/bin/rm", arguments: ["-rf", "/usr/local/texlive/2024"])
+        let a = finding("a", .admin([adminStep, s2, s3]), items: [item("a1"), item("a2"), item("a3")])
+        let p = RemovalPlan(findings: [a], selection: [a.id: ["a2"]], options: RemovalOptions())
+        #expect(p.commandPreview == ["sudo /bin/rm -rf /usr/local/texlive/2023"])
+        _ = await rig.runner.run(p) { _ in }
+        #expect(rig.exec.runs == [[s2]])
+    }
+
     @Test func hintsAreNeverPlanned() {
         let h = finding("h", .hint(nil), risk: .hintOnly)
         let t = finding("t", .trash)

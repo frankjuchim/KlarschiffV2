@@ -83,11 +83,37 @@ struct AppScannerTests {
         #expect(fs[0].items[0].url == t.root.appending(path: "Applications/Xcode-beta.app"))
     }
 
-    @Test func extraXcodeWithoutSelectListsAll() async throws {
+    @Test func extraXcodeWithoutSelectTreatsXcodeAppAsActive() async throws {
         let t = try FixtureTree()
         try t.file("Applications/Xcode.app/Contents/a", bytes: 1000)
+        try t.file("Applications/Xcode-beta.app/Contents/a", bytes: 1000)
         let fs = try await ExtraXcodeScanner().scan(.test(root: t.root))
-        #expect(fs.count == 1)
+        #expect(fs.map(\.id.key) == ["Xcode-beta.app"])
+    }
+
+    @Test func extraXcodeWithCommandLineToolsAndSingleXcodeFindsNothing() async throws {
+        let t = try FixtureTree()
+        try t.file("Applications/Xcode-16.app/Contents/a", bytes: 1000)
+        let runner = FakeCommandRunner()
+        runner.stub("/usr/bin/xcode-select", ["-p"], result: CommandResult(exitCode: 0, stdout: "/Library/Developer/CommandLineTools\n", stderr: ""))
+        #expect(try await ExtraXcodeScanner().scan(.test(root: t.root, runner: runner)).isEmpty)
+        #expect(try await ExtraXcodeScanner().scan(.test(root: t.root)).isEmpty)
+    }
+
+    @Test func extraXcodeWithoutSelectAndSeveralVersionsListsAll() async throws {
+        let t = try FixtureTree()
+        try t.file("Applications/Xcode-15.app/Contents/a", bytes: 1000)
+        try t.file("Applications/Xcode-16.app/Contents/a", bytes: 1000)
+        let fs = try await ExtraXcodeScanner().scan(.test(root: t.root))
+        #expect(fs.map(\.id.key) == ["Xcode-15.app", "Xcode-16.app"])
+    }
+
+    @Test func unusedAppsExcludeXcodeVersions() async throws {
+        let t = try FixtureTree()
+        try makeApp(t, "Applications/Xcode-old.app", bundleID: "com.foo.xcodeold", modifiedDaysAgo: 400)
+        try makeApp(t, "Applications/Other.app", bundleID: "com.foo.other", modifiedDaysAgo: 400)
+        let fs = try await UnusedAppsScanner(lastUsed: { _ in nil }).scan(.test(root: t.root))
+        #expect(fs.first?.items.map(\.name) == ["Other.app"])
     }
 
     @Test func registeredInCatalog() {

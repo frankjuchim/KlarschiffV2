@@ -66,7 +66,8 @@ import Foundation
         #expect(await ctx.claims.isClaimed(cache))
         #expect(await ctx.claims.isClaimed(cache.appending(path: "bootsnap")))
         #expect(!fake.environments.isEmpty)
-        #expect(fake.environments.allSatisfy { $0 == ToolLocator.brewEnvironment })
+        #expect(fake.environments.allSatisfy { $0["HOMEBREW_NO_AUTO_UPDATE"] == "1" && $0["PATH"]?.hasPrefix("/fake/bin:") == true })
+        #expect(fake.environments.allSatisfy { $0 == Self.tools.environment(for: Self.brew, base: ToolLocator.brewEnvironment) })
     }
 
     @Test func nothingToCleanNoFinding() async throws {
@@ -108,7 +109,7 @@ import Foundation
         #expect(f.method == .tool([cmd], fallback: nil))
         #expect(f.commandPreview == [cmd.display])
         #expect(f.blockingApps.isEmpty)
-        #expect(fake.environments.allSatisfy { $0 == ToolLocator.brewEnvironment })
+        #expect(fake.environments.allSatisfy { $0 == Self.tools.environment(for: Self.brew, base: ToolLocator.brewEnvironment) })
     }
 
     @Test func caskFixtureParsedAndDefaultSizer() async throws {
