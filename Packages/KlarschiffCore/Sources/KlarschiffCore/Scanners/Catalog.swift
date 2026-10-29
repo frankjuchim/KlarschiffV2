@@ -79,6 +79,12 @@ public enum Catalog {
             ],
             risk: .safe, method: .trash, blockingApps: claudeApp),
         PathRule(
+            id: "ai.coworkVM", category: .aiLeftovers,
+            title: "Claude Cowork – virtuelle Maschine",
+            summary: "Virtuelle Maschine für Cowork. Wird bei der nächsten Nutzung erneut heruntergeladen (~12 GB). Lohnt sich, wenn du Cowork selten nutzt.",
+            base: .home, patterns: ["Library/Application Support/Claude/vm_bundles"],
+            risk: .review, method: .delete, blockingApps: claudeApp),
+        PathRule(
             id: "ai.cliCaches", category: .aiLeftovers,
             title: "Codex-, Gemini- und Copilot-Caches",
             summary: "Protokolle und temporäre Dateien der KI-Kommandozeilen-Werkzeuge. Anmeldedaten, Einstellungen und Sitzungen werden nicht angefasst.",

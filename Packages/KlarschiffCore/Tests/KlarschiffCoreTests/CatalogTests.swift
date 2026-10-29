@@ -90,6 +90,22 @@ struct CatalogTests {
         }
     }
 
+    @Test func coworkVMRuleFindsVMBundleFolder() async throws {
+        let t = try FixtureTree()
+        try t.file("home/Library/Application Support/Claude/vm_bundles/claudevm.bundle/rootfs.img", bytes: 8192)
+        let rule = Catalog.rule("ai.coworkVM")
+        #expect(rule.risk == .review && rule.method == .delete)
+        #expect(rule.blockingApps.map(\.bundleID) == ["com.anthropic.claudefordesktop"])
+        let fs = try await PathScanner(rule: rule).scan(.test(root: t.root))
+        let f = try #require(fs.first)
+        #expect(fs.count == 1 && f.id.scannerID == "ai.coworkVM" && f.category == .aiLeftovers)
+        #expect(f.risk == .review && f.method == .delete && f.size ?? 0 >= 8192)
+        #expect(f.items.first?.url?.lastPathComponent == "vm_bundles")
+        #expect(f.commandPreview.count == 1 && f.commandPreview[0].hasPrefix("rm -rf "))
+        #expect(f.commandPreview[0].contains("vm_bundles") && !f.commandPreview[0].contains("#"))
+        #expect(f.summary.contains("~12 GB"))
+    }
+
     @Test func specValuesForSelectedRules() {
         let xcodeApps = Catalog.rule("xcode.derivedData").blockingApps
         #expect(xcodeApps.map(\.displayName) == ["Xcode", "Instruments", "xctrace", "instruments"])
