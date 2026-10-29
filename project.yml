@@ -54,7 +54,13 @@ schemes:
         Klarschiff: all
     run:
       config: Debug
+      # Jeder Start aus Xcode ist ein Trockenlauf; echter Lauf nur über die gebaute App aus dem Finder.
+      commandLineArguments:
+        "--dry-run": true
     test:
       config: Debug
+      # Eigene (deaktivierte) Argumente, damit der Test-Host das Run-Argument nicht erbt.
+      commandLineArguments:
+        "--dry-run": false
       targets:
         - KlarschiffTests

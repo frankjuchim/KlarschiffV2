@@ -24,6 +24,23 @@ struct KlarschiffApp: App {
             .frame(minWidth: 1000, minHeight: 720)
         }
         .windowResizability(.contentMinSize)
+        .commands {
+            if let model {
+                CommandMenu("Entwickler") {
+                    DryRunToggle(model: model)
+                }
+            }
+        }
+    }
+}
+
+/// Schalter „Trockenlauf“ im Menü „Entwickler“; bei erzwungenem Trockenlauf (Startargument) an und gesperrt.
+struct DryRunToggle: View {
+    let model: AppModel
+
+    var body: some View {
+        Toggle("Trockenlauf", isOn: Binding(get: { model.dryRun }, set: { model.setDryRunSetting($0) }))
+            .disabled(model.isDryRunForced)
     }
 }
 
@@ -39,16 +56,11 @@ struct RootView: View {
                 VStack(alignment: .leading, spacing: 24) {
                     HStack(alignment: .top, spacing: 24) {
                         VStack(alignment: .leading, spacing: 16) {
-                            HeaderView()
+                            HeaderView(dryRun: model.dryRun)
                             TabBarView(selection: $model.selectedTab)
                         }
                         Spacer(minLength: 0)
                         CapacityCard(disk: model.disk)
-                    }
-                    if model.dryRun {
-                        Label("Trockenlauf: Es wird nichts entfernt.", systemImage: "flask")
-                            .font(.callout.weight(.semibold))
-                            .foregroundStyle(.orange)
                     }
                     tabContent
                 }

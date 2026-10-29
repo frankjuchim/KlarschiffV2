@@ -32,8 +32,12 @@ KLARSCHIFF_LIVE_SCAN=1 KLARSCHIFF_LIVE_SCAN_OUT=/tmp/live-scan.md \
 
 ## Trockenlauf
 
-Die App mit dem Argument `--dry-run` starten (z. B. in Xcode unter Scheme > Run > Arguments). Dann läuft alles
-wie gewohnt, es wird aber nichts entfernt.
+Im Trockenlauf läuft alles wie gewohnt, es wird aber nichts entfernt. Er ist aktiv, wenn die App mit dem
+Argument `--dry-run` (oder `KLARSCHIFF_DRY_RUN=1`) startet oder wenn im Menü „Entwickler“ der Schalter
+„Trockenlauf“ an ist (bleibt gespeichert). Solange er aktiv ist, zeigt der Kopfbereich „Trockenlauf aktiv“.
+
+**Entwickeln:** Ein Start aus Xcode ist immer ein Trockenlauf – das Scheme übergibt beim Run `--dry-run`, der
+Schalter lässt sich dann nicht ausschalten. Für einen echten Lauf die gebaute App aus dem Finder starten.
 
 ## Release
 

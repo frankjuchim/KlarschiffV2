@@ -52,18 +52,37 @@ final class AppModel {
     /// Letzter Fehler in Alltagssprache (Behalten-Liste, Papierkorb …); die Oberfläche zeigt und löscht ihn.
     var lastError: String?
 
-    /// Trockenlauf (`--dry-run` / `KLARSCHIFF_DRY_RUN=1`): wird in jeden Plan erzwungen.
-    let dryRun: Bool
+    /// UserDefaults-Schlüssel des Schalters „Trockenlauf“ im Menü „Entwickler“.
+    static let dryRunDefaultsKey = "dryRun"
+
+    /// Vom Start erzwungener Trockenlauf (`--dry-run` / `KLARSCHIFF_DRY_RUN=1`); der Schalter kann ihn nicht abschalten.
+    let isDryRunForced: Bool
+    /// Schalter „Trockenlauf“ (Entwicklermenü), in UserDefaults gespeichert.
+    private(set) var dryRunSetting: Bool
+    /// Wirksamer Trockenlauf: Startargument ODER Schalter. Wird in jeden Plan erzwungen.
+    var dryRun: Bool { isDryRunForced || dryRunSetting }
 
     @ObservationIgnored private let deps: AppDependencies
+    @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var findingsByID: [FindingID: Finding] = [:]
     @ObservationIgnored private var scanGeneration = 0
     /// Anzeigenamen (Fund-Titel, Item-Namen) des zuletzt ausgeführten Plans – bleiben auch nach dem Neu-Scan lesbar.
     @ObservationIgnored private var removalLabels: [FindingID: (title: String, items: [String: String])] = [:]
 
-    init(dependencies: AppDependencies) {
+    init(dependencies: AppDependencies, defaults: UserDefaults = .standard) {
         deps = dependencies
-        dryRun = dependencies.dryRun
+        self.defaults = defaults
+        isDryRunForced = dependencies.dryRun
+        dryRunSetting = defaults.bool(forKey: Self.dryRunDefaultsKey)
+    }
+
+    // MARK: - Trockenlauf
+
+    /// Schaltet den Trockenlauf-Schalter; bei erzwungenem Trockenlauf wirkungslos.
+    func setDryRunSetting(_ on: Bool) {
+        guard !isDryRunForced else { return }
+        dryRunSetting = on
+        defaults.set(on, forKey: Self.dryRunDefaultsKey)
     }
 
     // MARK: - Systemzustand
