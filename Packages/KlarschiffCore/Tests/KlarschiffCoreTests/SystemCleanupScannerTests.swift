@@ -29,6 +29,36 @@ private func run(_ scanner: any KlarschiffCore.Scanner, _ ctx: ScanContext) asyn
         #expect(f.commandPreview.allSatisfy { $0.hasPrefix("rm -rf ") })
     }
 
+    @Test func tempSkipsImmutableEntries() async throws {
+        let tree = try FixtureTree()
+        try tree.file("T/ok", bytes: 10)
+        try tree.file("T/locked/inner.pkg", bytes: 10)
+        for n in ["T/ok", "T/locked/inner.pkg", "T/locked"] { try tree.setModified(n, daysAgo: 10) }
+        let locked = tree.root.appending(path: "T/locked/inner.pkg").path
+        #expect(chflags(locked, UInt32(UF_IMMUTABLE)) == 0)
+        defer { _ = chflags(locked, 0) }
+        let f = try #require(try await run(TempScanner(), ScanContext.test(root: tree.root)).first)
+        #expect(f.items.map(\.name) == ["ok"])
+        #expect(f.summary.contains("1 Eintrag ist geschützt (gehört dem System oder ist gesperrt) und wird übersprungen."))
+    }
+
+    @Test func tempSkipsForeignOwner() async throws {
+        let tree = try FixtureTree()
+        try tree.file("T/mine", bytes: 10)
+        try tree.file("T/d1/x", bytes: 10)
+        try tree.file("T/d2/x", bytes: 10)
+        for n in ["T/mine", "T/d1/x", "T/d1", "T/d2/x", "T/d2"] { try tree.setModified(n, daysAgo: 10) }
+        let me = getuid()
+        let scanner = TempScanner(status: { path in
+            path.hasSuffix("/d1/x") || path.hasSuffix("/d2") ? (0, 0) : (me, 0)
+        })
+        let f = try #require(try await run(scanner, ScanContext.test(root: tree.root)).first)
+        #expect(f.items.map(\.name) == ["mine"])
+        #expect(f.summary.contains("2 Einträge sind geschützt"))
+        let all = TempScanner(status: { _ in (0, 0) })
+        #expect(try await run(all, ScanContext.test(root: tree.root)).isEmpty)
+    }
+
     @Test func tempSkipsSymlinks() async throws {
         let tree = try FixtureTree()
         let docs = try tree.dir("home/Documents")

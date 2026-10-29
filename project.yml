@@ -1,5 +1,6 @@
 name: Klarschiff
 options:
+  developmentLanguage: de
   deploymentTarget:
     macOS: "26.0"
 configFiles:
@@ -32,6 +33,7 @@ targets:
         CODE_SIGN_ENTITLEMENTS: App/Klarschiff.entitlements
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDevelopmentRegion: de
         INFOPLIST_KEY_CFBundleDisplayName: "Klarschiff 2"
         INFOPLIST_KEY_NSAppleEventsUsageDescription: "Klarschiff 2 bittet den Finder, den Papierkorb zu leeren."
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities

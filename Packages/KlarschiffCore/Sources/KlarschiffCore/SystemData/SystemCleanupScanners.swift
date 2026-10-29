@@ -54,12 +54,50 @@ struct TempScanner: Scanner {
     let id = "sysdata.temp"
     static var warning: String { SystemCleanup.warning(for: "sysdata.temp") ?? "" }
 
+    /// Besitzer und BSD-Flags eines Pfads (`lstat`, folgt Symlinks nie); `nil`, wenn nicht lesbar. In Tests ersetzbar.
+    typealias Status = @Sendable (String) -> (uid: UInt32, flags: UInt32)?
+    static let protectedFlags: UInt32 = UInt32(UF_IMMUTABLE | UF_APPEND | SF_IMMUTABLE | SF_APPEND)
+
+    let status: Status
+    let currentUID: UInt32
+
+    init(status: @escaping Status = TempScanner.lstatStatus, currentUID: UInt32 = getuid()) {
+        self.status = status
+        self.currentUID = currentUID
+    }
+
+    static let lstatStatus: Status = { path in
+        var st = stat()
+        guard lstat(path, &st) == 0 else { return nil }
+        return (UInt32(st.st_uid), UInt32(st.st_flags))
+    }
+
+    /// `true`, wenn `root` oder etwas darin (rekursiv, lstat) einem anderen Benutzer gehört oder gesperrt ist.
+    /// Nicht lesbare Einträge zählen hier nicht als geschützt – dafür sorgt `allOlder`.
+    func isProtected(_ root: URL) throws -> Bool {
+        func check(_ path: String) -> Bool {
+            guard let s = status(path) else { return false }
+            return s.uid != currentUID || s.flags & Self.protectedFlags != 0
+        }
+        if check(root.path) { return true }
+        guard let en = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil, options: [],
+                                                      errorHandler: { _, _ in true }) else { return false }
+        var count = 0
+        for case let url as URL in en {
+            count += 1
+            if count % 500 == 0 { try Task.checkCancellation() }
+            if check(url.path) { return true }
+        }
+        return false
+    }
+
     func scan(_ ctx: ScanContext) async throws -> [Finding] {
         let base = ctx.userTempDir
         guard SystemCleanup.type(base.path) == .typeDirectory,
               let names = try? FileManager.default.contentsOfDirectory(atPath: base.path) else { return [] }
         let cutoff = ctx.now.addingTimeInterval(-3 * SystemCleanup.day)
         var items: [FindingItem] = []
+        var skippedProtected = 0
         for name in names.sorted() where SystemCleanup.isSafeName(name) {
             try Task.checkCancellation()
             let url = base.appending(path: name)
@@ -70,16 +108,21 @@ struct TempScanner: Scanner {
             case .typeDirectory: guard try Self.allOlder(url, than: cutoff) else { continue }
             default: continue   // Symlinks, Sockets, Pipes: nie anbieten
             }
+            if try isProtected(url) { skippedProtected += 1; continue }
             let size = try? await ctx.sizer.size(of: url)
             items.append(FindingItem(id: url.path, url: url, name: name, size: size, date: date,
                                      detail: size == nil ? "mindestens (Größe nicht messbar)" : nil))
         }
         guard !items.isEmpty else { return [] }
+        let protectedNote = skippedProtected == 0 ? ""
+            : skippedProtected == 1
+            ? " 1 Eintrag ist geschützt (gehört dem System oder ist gesperrt) und wird übersprungen."
+            : " \(skippedProtected) Einträge sind geschützt (gehören dem System oder sind gesperrt) und werden übersprungen."
         return [Finding(
             id: FindingID(scannerID: id, key: "all"), category: .systemData,
             title: "Alte temporäre Dateien",
             summary: SystemCleanup.summary(warning: Self.warning,
-                explanation: "Klarschiff 2 entfernt nur Einträge in deinem eigenen temporären Ordner, die seit mehr als 3 Tagen unverändert sind."),
+                explanation: "Klarschiff 2 entfernt nur Einträge in deinem eigenen temporären Ordner, die seit mehr als 3 Tagen unverändert sind.\(protectedNote)"),
             risk: .review, method: .delete, items: items, size: SystemCleanup.total(items),
             blockingApps: [], keepSuggested: false,
             commandPreview: items.compactMap(\.url).map { "rm -rf " + ShellQuote.quote($0.path) },
