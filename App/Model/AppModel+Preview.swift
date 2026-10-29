@@ -7,7 +7,12 @@ extension AppModel {
     /// Modell mit Fake-Abhängigkeiten; der „Scan“ liefert feste Funde (Instruments, iOS-Runtimes, TeX Live …).
     static var preview: AppModel {
         let model = AppModel(dependencies: .preview)
-        Task { await model.scan(includeSlowChecks: false) }
+        Task {
+            await model.scan(includeSlowChecks: false)
+            // Nach dem Scan (der neu erkennt): feste Beispiele für Migrationskarte und Check-Verlauf.
+            model.legacyItems = PreviewLegacy.items
+            model.checkHistory = PreviewLegacy.history
+        }
         return model
     }
 }
@@ -291,6 +296,7 @@ private enum PreviewSystemData {
 private struct PreviewNotifier: Notifier {
     func requestAuthorization() async -> Bool { true }
     func isAuthorized() async -> Bool { true }
+    func authorizationStatus() async -> NotificationAuthorization { .authorized }
     func send(_ n: CheckNotification) async {}
 }
 
@@ -298,4 +304,40 @@ private struct PreviewAgentService: AgentService {
     func register(_ plist: String) throws {}
     func unregister(_ plist: String) async throws {}
     func status(_ plist: String) -> AgentStatus { .notRegistered }
+}
+
+/// Beispiel-Überbleibsel der alten Automatik und ein kurzer Check-Verlauf (neueste zuerst).
+enum PreviewLegacy {
+    static let home = URL(filePath: "/Users/vorschau")
+
+    static let items: [LegacyItem] = [
+        LegacyItem(
+            id: "com.frankjuchim.cleanup", kind: .agent(label: "com.frankjuchim.cleanup"),
+            url: home.appending(path: "Library/LaunchAgents/com.frankjuchim.cleanup.plist"),
+            title: "Hintergrund-Agent com.frankjuchim.cleanup",
+            explanation: "Startet jeden Monatsersten um 10:00 Uhr das Skript `cleanup.sh`. Das Skript `cleanup.sh` leert jeden Monatsersten automatisch deine Caches – das macht Klarschiff 2 bewusst nie ohne dich.",
+            isLoaded: true),
+        LegacyItem(
+            id: "de.bodendiek.klarschiff.check", kind: .agent(label: "de.bodendiek.klarschiff.check"),
+            url: home.appending(path: "Library/LaunchAgents/de.bodendiek.klarschiff.check.plist"),
+            title: "Hintergrund-Agent de.bodendiek.klarschiff.check",
+            explanation: "Startet sonntags um 10:00 Uhr einen Check. Der alte Klarschiff-Check zeigt auf eine App, die es nicht mehr gibt.",
+            isLoaded: true),
+        LegacyItem(
+            id: "log", kind: .log, url: home.appending(path: "cleanup.log"), title: "Protokoll cleanup.log",
+            explanation: "Altes Protokoll des Aufräum-Skripts.", isLoaded: false),
+    ]
+
+    static var history: [CheckSnapshot] {
+        let now = Date()
+        return [
+            CheckSnapshot(date: now.addingTimeInterval(-3 * 86_400), cleanableTotal: 45_600_000_000,
+                          freeBytes: 226_320_000_000, totalBytes: 494_380_000_000, sizes: [:], titles: [:],
+                          alerts: [.cleanable(total: 45_600_000_000),
+                                   .growth(id: "systemdata.library", title: "Bibliothek", from: 20_000_000_000, to: 27_000_000_000)]),
+            CheckSnapshot(date: now.addingTimeInterval(-10 * 86_400), cleanableTotal: 31_200_000_000,
+                          freeBytes: 240_000_000_000, totalBytes: 494_380_000_000, sizes: [:], titles: [:],
+                          alerts: [.cleanable(total: 31_200_000_000)]),
+        ]
+    }
 }

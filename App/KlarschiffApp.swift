@@ -36,6 +36,14 @@ struct KlarschiffApp: App {
                 }
             }
         }
+
+        // ⌘, – Einstellungen des automatischen Checks.
+        Settings {
+            if let model = appDelegate.model {
+                SettingsView()
+                    .environment(model)
+            }
+        }
     }
 }
 
@@ -102,7 +110,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func applicationDidBecomeActive(_ notification: Notification) {
         guard let model else { return }
         model.refreshAgentStatus()
-        Task { await model.loadCheckHistory() }
+        Task {
+            await model.loadCheckHistory()
+            await model.refreshNotificationStatus()
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -188,6 +199,9 @@ struct RootView: View {
             model.refreshSystemState()
             model.refreshAgentStatus()
             await model.loadCheckHistory()
+            await model.refreshNotificationStatus()
+            // Alte Automatik sofort zeigen, nicht erst nach dem (langen) ersten Scan.
+            await model.detectLegacy()
             await model.scan(includeSlowChecks: false)
         }
     }

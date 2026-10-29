@@ -90,8 +90,14 @@ final class AppModel {
     var checkHistory: [CheckSnapshot] = []
     var lastCheck: CheckSnapshot? { checkHistory.first }
     var isChecking = false
-    var notificationsDenied = false
+    /// Gespeicherter Mitteilungs-Entscheid („nie gefragt“ ≠ „abgelehnt“).
+    var notificationStatus: NotificationAuthorization = .notDetermined
+    /// Mitteilungen ausdrücklich abgelehnt – der Check meldet sich nicht.
+    var notificationsDenied: Bool { notificationStatus == .denied }
     var agentStatus: AgentStatus = .notRegistered
+    /// Überbleibsel der alten Aufräum-Automatik (Karte oben im Tab „Speicher“, solange etwas existiert).
+    var legacyItems: [LegacyItem] = []
+    var showsLegacyCard: Bool { !legacyItems.isEmpty }
 
     /// UserDefaults-Schlüssel des Schalters „Trockenlauf“ im Menü „Entwickler“.
     static let dryRunDefaultsKey = "dryRun"
@@ -134,7 +140,11 @@ final class AppModel {
         checkSchedule = schedule
         defaults.set(schedule.rawValue, forKey: Self.checkScheduleDefaultsKey)
         if schedule != .off {
-            notificationsDenied = !(await deps.notifier.requestAuthorization())
+            if await deps.notifier.requestAuthorization() {
+                notificationStatus = .authorized
+            } else {
+                await refreshNotificationStatus()
+            }
         }
         do {
             try await scheduler.apply(schedule)
@@ -154,13 +164,83 @@ final class AppModel {
         guard !isChecking, !isScanning, !isRemoving, !isMeasuringSystemData else { return }
         isChecking = true
         let outcome = await BackgroundCheck.run(dependencies: deps.check)
-        notificationsDenied = !outcome.notificationsAllowed
+        if outcome.notificationsAllowed {
+            notificationStatus = .authorized
+        } else if notificationStatus == .authorized {
+            // Inzwischen entzogen – genauen Entscheid nachlesen (fragt nicht).
+            await refreshNotificationStatus()
+        }
         await loadCheckHistory()
         isChecking = false
     }
 
     func loadCheckHistory() async {
         checkHistory = await deps.history.all()
+    }
+
+    /// Liest den gespeicherten Mitteilungs-Entscheid, ohne zu fragen.
+    func refreshNotificationStatus() async {
+        notificationStatus = await deps.notifier.authorizationStatus()
+    }
+
+    /// „Letzter Check vor 3 Tagen: 45,6 GB aufräumbar“ – Kurzfassung wie die Mitteilung, sonst die aufräumbare Menge;
+    /// nil ohne Check. Immer „vor …“ (mindestens 1 Sekunde), auch bei leicht verstellter Uhr.
+    nonisolated static func statusLine(_ s: CheckSnapshot?, now: Date) -> String? {
+        guard let s else { return nil }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.locale = Locale(identifier: "de_DE")
+        formatter.unitsStyle = .full
+        formatter.dateTimeStyle = .numeric
+        let elapsed = max(now.timeIntervalSince(s.date), 1)
+        let relative = formatter.localizedString(fromTimeInterval: -elapsed)
+        return "Letzter Check \(relative): \(shortSummary(s))"
+    }
+
+    /// Kurzfassung eines Checks: der Mitteilungstext, ohne Auffälligkeit „<Menge> aufräumbar“.
+    nonisolated static func shortSummary(_ s: CheckSnapshot) -> String {
+        CheckNotificationText.make(s)?.body ?? "\(ByteFormat.string(s.cleanableTotal)) aufräumbar"
+    }
+
+    // MARK: - Alte Automatik (Migration)
+
+    /// Erkennt die alte Aufräum-Automatik (nur lesend: Dateien + `launchctl print`).
+    func detectLegacy() async {
+        legacyItems = await LegacyAutomation.detect(deps.makeContext(false))
+    }
+
+    /// Nach Bestätigung: geladene Agents per `launchctl bootout` stoppen, dann über den bekannten Entfernen-Weg
+    /// (RemovalRunner → TrashRemover, SafetyGuard) in den Papierkorb legen. Trockenlauf: kein bootout, nur melden.
+    /// Ergebnis im Ergebnis-Banner, danach neu erkennen.
+    func removeLegacy(includeExtras: Bool) async {
+        guard !isRemoving, !isScanning, !isMeasuringSystemData, !isChecking, !legacyItems.isEmpty else { return }
+        isRemoving = true
+        removalProgress = "Alte Automatik wird entfernt …"
+        let runDry = dryRun
+        let ctx = deps.makeContext(false)
+        let items = legacyItems
+        let finding = LegacyAutomation.removalFinding(items, ctx: ctx, includeExtras: includeExtras)
+        removalLabels = [finding.id: (
+            finding.title,
+            Dictionary(items.map { ($0.id, $0.title) }, uniquingKeysWith: { first, _ in first }))]
+
+        let bootouts = await LegacyAutomation.bootout(items, runner: ctx.runner, dryRun: runDry)
+        let plan = RemovalPlan(
+            findings: [finding], selection: [finding.id: Set(finding.items.map(\.id))],
+            options: RemovalOptions(dryRun: runDry))
+        let trashed = await deps.runner.run(plan) { _ in }
+        let bootoutFailures = bootouts.filter {
+            if case .failed = $0.outcome { return true }
+            return false
+        }
+        lastRemoval = RemovalReport(
+            results: bootouts + trashed.results, freedBytes: trashed.freedBytes,
+            failures: bootoutFailures + trashed.failures)
+        lastRemovalWasDryRun = runDry
+        isRemoving = false
+        removalProgress = nil
+        trashBytes = await deps.trash(ctx)
+        refreshSystemState()
+        await detectLegacy()
     }
 
     /// Klick auf eine Check-Mitteilung: Ziel-Tab aus `userInfo["tab"]` (`AppTab.rawValue`); Unbekanntes ignorieren.
@@ -218,6 +298,7 @@ final class AppModel {
         scanProgress = 1
         isScanning = false
         refreshSystemState()
+        await detectLegacy()
     }
 
     private func apply(_ newReport: ScanReport) {

@@ -45,8 +45,13 @@ private final class FakeAgentService: AgentService, Sendable {
 /// Zählt Erlaubnis-Anfragen (Dialog) und Status-Abfragen getrennt.
 private final class FakeNotifier: Notifier, Sendable {
     private let allowed: Bool
+    /// Gespeicherter Entscheid; ohne Angabe aus `allowed` abgeleitet (erlaubt / abgelehnt).
+    private let status: NotificationAuthorization?
     private let store = Mutex<(sent: [CheckNotification], requests: Int, checks: Int)>(([], 0, 0))
-    init(allowed: Bool) { self.allowed = allowed }
+    init(allowed: Bool, status: NotificationAuthorization? = nil) {
+        self.allowed = allowed
+        self.status = status
+    }
     var sent: [CheckNotification] { store.withLock { $0.sent } }
     var requestCalls: Int { store.withLock { $0.requests } }
     var isAuthorizedCalls: Int { store.withLock { $0.checks } }
@@ -57,6 +62,9 @@ private final class FakeNotifier: Notifier, Sendable {
     func isAuthorized() async -> Bool {
         store.withLock { $0.checks += 1 }
         return allowed
+    }
+    func authorizationStatus() async -> NotificationAuthorization {
+        status ?? (allowed ? .authorized : .denied)
     }
     func send(_ n: CheckNotification) async { store.withLock { $0.sent.append(n) } }
 }
@@ -308,6 +316,7 @@ func launchAgentPlistsMatchSpec(name: String, calendar: [String: Int]) throws {
     let notifier = FakeNotifier(allowed: false)
     let history = CheckHistory(fileURL: tempDir().appending(path: "history.json"))
     let model = makeModel(notifier: notifier, history: history)
+    await model.refreshNotificationStatus()
 
     await model.runCheckNow()
 
@@ -355,4 +364,25 @@ func launchAgentPlistsMatchSpec(name: String, calendar: [String: Int]) throws {
 @Test func notificationUserInfoCarriesTab() {
     let n = CheckNotification(title: "Klarschiff 2", body: "x", tab: .systemData)
     #expect(UserNotificationCenterNotifier.userInfo(for: n)["tab"] as? String == "systemData")
+}
+
+// MARK: - Mitteilungs-Erlaubnis
+
+@Test @MainActor func notificationStatusDistinguishesNotAskedFromDenied() async {
+    let notAsked = makeModel(notifier: FakeNotifier(allowed: false, status: .notDetermined))
+    await notAsked.refreshNotificationStatus()
+    #expect(notAsked.notificationStatus == .notDetermined)
+    #expect(notAsked.notificationsDenied == false)
+    // Ein Check ohne Erlaubnis macht aus „nie gefragt“ kein „abgelehnt“.
+    await notAsked.runCheckNow()
+    #expect(notAsked.notificationStatus == .notDetermined)
+
+    let denied = makeModel(notifier: FakeNotifier(allowed: false, status: .denied))
+    await denied.refreshNotificationStatus()
+    #expect(denied.notificationStatus == .denied)
+    #expect(denied.notificationsDenied)
+
+    let allowed = makeModel(notifier: FakeNotifier(allowed: true))
+    await allowed.setCheckSchedule(.weekly)
+    #expect(allowed.notificationStatus == .authorized)
 }

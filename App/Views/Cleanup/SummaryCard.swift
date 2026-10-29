@@ -60,6 +60,16 @@ struct SummaryCard: View {
                 }
             }
 
+            if tab == .storage, model.lastCheck != nil {
+                TimelineView(.periodic(from: .now, by: 60)) { context in
+                    if let line = AppModel.statusLine(model.lastCheck, now: context.date) {
+                        Label(line, systemImage: "clock")
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
             HStack(alignment: .center, spacing: 16) {
                 Text(Self.ruleText)
                     .foregroundStyle(.secondary)

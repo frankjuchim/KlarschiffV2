@@ -2,12 +2,19 @@ import Foundation
 import KlarschiffCore
 @preconcurrency import UserNotifications
 
+/// Gespeicherter Mitteilungs-Entscheid – „nie gefragt“ ist etwas anderes als „abgelehnt“.
+enum NotificationAuthorization: Sendable, Equatable {
+    case notDetermined, denied, authorized
+}
+
 /// Sendet die eine Check-Mitteilung – in Tests eine Attrappe.
 protocol Notifier: Sendable {
     /// Fragt beim ersten Mal nach der Erlaubnis (System-Dialog!); nur beim Einschalten des Checks aufrufen.
     func requestAuthorization() async -> Bool
     /// Liest den gespeicherten Entscheid, ohne zu fragen – für den Check-Lauf.
     func isAuthorized() async -> Bool
+    /// Wie `isAuthorized`, unterscheidet aber „nie gefragt“ von „abgelehnt“ (für den Hinweis in den Einstellungen).
+    func authorizationStatus() async -> NotificationAuthorization
     func send(_ n: CheckNotification) async
 }
 
@@ -23,6 +30,14 @@ struct UserNotificationCenterNotifier: Notifier {
         switch await UNUserNotificationCenter.current().notificationSettings().authorizationStatus {
         case .authorized, .provisional: true
         default: false
+        }
+    }
+
+    func authorizationStatus() async -> NotificationAuthorization {
+        switch await UNUserNotificationCenter.current().notificationSettings().authorizationStatus {
+        case .authorized, .provisional, .ephemeral: .authorized
+        case .notDetermined: .notDetermined
+        default: .denied
         }
     }
 

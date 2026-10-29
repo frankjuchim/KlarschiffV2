@@ -13,6 +13,9 @@ struct CleanupTabView: View {
             if let error = model.lastError {
                 ErrorBanner(message: error) { model.lastError = nil }
             }
+            if tab == .storage, model.showsLegacyCard {
+                LegacyAutomationCard(items: model.legacyItems)
+            }
             if !model.hasFullDiskAccess {
                 FullDiskAccessCard()
             }
