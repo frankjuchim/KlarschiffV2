@@ -29,6 +29,19 @@ private final class RecordingRemover: Remover {
     }
 }
 
+private final class LoggingExecutor: PrivilegedExecutor {
+    let log: Log
+    let result: AdminRunResult
+    private let state = Mutex<[[AdminStep]]>([])
+    init(log: Log, result: AdminRunResult) { self.log = log; self.result = result }
+    var runs: [[AdminStep]] { state.withLock { $0 } }
+    func run(_ steps: [AdminStep]) async -> AdminRunResult {
+        log.append("admin")
+        state.withLock { $0.append(steps) }
+        return result
+    }
+}
+
 private let xcode = AppRef(bundleID: "com.apple.dt.Xcode", processName: nil, displayName: "Xcode")
 private let toolCmd = ToolCommand(tool: "brew", arguments: ["uninstall", "--cask", "foo"], timeout: .seconds(10))
 
@@ -57,7 +70,7 @@ private func plan(_ fs: [Finding], zap: Set<FindingID> = [], direct: Set<Finding
 private struct Rig {
     let log = Log()
     let trash: RecordingRemover, delete: RecordingRemover, tool: RecordingRemover
-    let exec: FakeExecutor
+    let exec: LoggingExecutor
     let apps: FakeRunningApps
     let runner: RemovalRunner
 
@@ -71,7 +84,7 @@ private struct Rig {
         trash = RecordingRemover("trash", log: log)
         delete = RecordingRemover("delete", log: log)
         tool = RecordingRemover("tool", log: log)
-        exec = FakeExecutor(fixed: adminResult)
+        exec = LoggingExecutor(log: log, result: adminResult)
         self.apps = apps
         runner = RemovalRunner(trash: trash, delete: delete, tool: tool,
                                admin: AdminRemover(executor: exec, guard: g), runningApps: apps, diskSpace: disk)
@@ -90,7 +103,7 @@ private let adminStep = AdminStep(executable: "/bin/rm", arguments: ["-rf", "/us
         ]
         let rig = try Rig()
         let report = await rig.runner.run(plan(fs)) { _ in }
-        #expect(rig.log.entries == ["tool:x", "trash:t", "delete:d"])
+        #expect(rig.log.entries == ["tool:x", "trash:t", "delete:d", "admin"])
         #expect(rig.exec.runs.count == 1)
         #expect(report.results.count == 4)
         #expect(report.failures.isEmpty)
@@ -148,6 +161,40 @@ private let adminStep = AdminStep(executable: "/bin/rm", arguments: ["-rf", "/us
         #expect(byItem["i2"] == .removed(freed: 100))
     }
 
+    @Test func itemWatchedAppStartingMidRunSkipsOnlyThatItem() async throws {
+        let apps = FakeRunningApps()
+        let rig = try Rig(apps: apps)
+        let cache = AppRef(bundleID: "com.x.app", processName: nil, displayName: "X")
+        let w = FindingItem(id: "w", url: URL(filePath: "/Users/x/Library/Caches/w"), name: "w", size: 5, watchedApp: cache)
+        let f = finding("a", .trash, items: [w, item("i2")])
+        apps.setRunning(["com.x.app"])
+        let report = await rig.runner.run(plan([f])) { _ in }
+        #expect(rig.trash.calls.first?.1 == ["i2"])
+        #expect(report.results.contains { $0.itemID == "w" && $0.outcome == .skipped("X läuft – vorher beenden") })
+    }
+
+    @Test func blockedItemSkipsWholeToolFinding() async throws {
+        let apps = FakeRunningApps(running: ["com.apple.dt.Xcode"])
+        let rig = try Rig(apps: apps)
+        let f = finding("x", .tool([toolCmd], fallback: nil), items: [item("i1", blocking: xcode), item("i2")])
+        let report = await rig.runner.run(plan([f])) { _ in }
+        #expect(rig.tool.calls.isEmpty)
+        #expect(report.results.count == 2)
+        #expect(report.results.allSatisfy { $0.outcome == .skipped("Xcode läuft – vorher beenden") })
+    }
+
+    @Test func untrustedTapHintKeepsCaskNameAfterZap() async throws {
+        let f = finding("x", .tool([toolCmd], fallback: nil))
+        let p = plan([f], zap: [f.id])
+        guard case .tool(let cmds, _) = p.toolSteps[0].0.method else { Issue.record("tool"); return }
+        let fake = FakeCommandRunner()
+        fake.stub("/x/brew", cmds[0].arguments, result: CommandResult(exitCode: 1, stdout: "", stderr: "Error: Refusing to load cask from untrusted tap foo/bar"))
+        let remover = ToolRemover(runner: fake, tools: ToolLocator(searchPaths: ["/x"], fileExists: { _ in true }))
+        let r = await remover.remove(p.toolSteps[0].0, items: p.toolSteps[0].1, dryRun: false)
+        guard case .failed(let msg) = r[0].outcome else { Issue.record("failed"); return }
+        #expect(msg.contains("brew uninstall --cask foo ·"))
+    }
+
     @Test func hintsAreNeverPlanned() {
         let h = finding("h", .hint(nil), risk: .hintOnly)
         let t = finding("t", .trash)
@@ -203,8 +250,8 @@ private let adminStep = AdminStep(executable: "/bin/rm", arguments: ["-rf", "/us
         let f = finding("x", .tool([toolCmd], fallback: nil))
         let p = plan([f], zap: [f.id])
         guard case .tool(let cmds, _) = p.toolSteps[0].0.method else { Issue.record("tool"); return }
-        #expect(cmds[0].arguments == ["uninstall", "--cask", "foo", "--zap"])
-        #expect(p.commandPreview == ["brew uninstall --cask foo --zap"])
+        #expect(cmds[0].arguments == ["uninstall", "--cask", "--zap", "foo"])
+        #expect(p.commandPreview == ["brew uninstall --cask --zap foo"])
         let q = plan([f])
         #expect(q.commandPreview == ["brew uninstall --cask foo"])
     }

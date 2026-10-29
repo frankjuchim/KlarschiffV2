@@ -94,13 +94,17 @@ public struct RemovalRunner: Sendable {
 
         var ready: [FindingItem] = []
         var skipped: [ItemResult] = []
+        var firstBlocker: AppRef?
         for item in items {
-            if let blocker = item.blockingApp, let app = runningApps.running([blocker]).first {
+            if let candidate = item.watchedApp ?? item.blockingApp, let app = runningApps.running([candidate]).first {
+                firstBlocker = firstBlocker ?? app
                 skipped += skip(app, [item])
             } else {
                 ready.append(item)
             }
         }
+        // ToolRemover kann keine Teilmenge entfernen: ein blockiertes Item sperrt den ganzen Fund.
+        if case .tool = finding.method, let app = firstBlocker { return ([], skip(app, items)) }
         return (ready, skipped)
     }
 }

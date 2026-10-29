@@ -34,6 +34,8 @@ struct CollectorScannerTests {
         let other = try #require(fs[0].items.first { $0.name == "com.other.app" })
         #expect(spotify.blockingApp?.bundleID == "com.spotify.client")
         #expect(other.blockingApp == nil)
+        #expect(spotify.watchedApp?.bundleID == "com.spotify.client")
+        #expect(other.watchedApp?.bundleID == "com.other.app")
     }
 
     @Test func otherCachesSkipSymlinks() async throws {

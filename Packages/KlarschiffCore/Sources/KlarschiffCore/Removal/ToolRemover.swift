@@ -35,7 +35,7 @@ public struct ToolRemover: Remover {
                 let r = try await runner.run(exe, command.arguments, timeout: command.timeout, environment: env)
                 if r.exitCode != 0 {
                     if command.tool == "brew", let tap = HomebrewErrors.untrustedTap(in: r.stderr) {
-                        let name = command.arguments.last ?? ""
+                        let name = command.arguments.last { !$0.hasPrefix("-") } ?? ""
                         return .failed("Homebrew vertraut diesem Tap nicht. Führe nacheinander aus: brew trust \(tap) · brew uninstall --cask \(name) · brew untap \(tap)")
                     }
                     let msg = RemovalText.shorten(r.stderr)

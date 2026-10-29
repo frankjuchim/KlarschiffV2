@@ -43,7 +43,8 @@ public struct RemovalPlan: Sendable {
                         guard c.tool == "brew", c.arguments.starts(with: ["uninstall", "--cask"]),
                               !c.arguments.contains("--zap") else { return c }
                         var copy = c
-                        copy.arguments.append("--zap")
+                        // Direkt hinter `--cask`, damit der Cask-Name das letzte Argument bleibt.
+                        if let i = copy.arguments.firstIndex(of: "--cask") { copy.arguments.insert("--zap", at: i + 1) }
                         return copy
                     }
                     planned = Self.copy(finding, method: .tool(zapped, fallback: fallback))

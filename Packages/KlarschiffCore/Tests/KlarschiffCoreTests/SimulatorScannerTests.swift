@@ -87,6 +87,7 @@ import Foundation
         let fs = try await UnavailableSimulatorsScanner().scan(.test(runner: fake))
         let f = try #require(fs.first)
         #expect(fs.count == 1 && f.id == FindingID(scannerID: "sim.unavailable", key: "all"))
+        #expect(f.watchedApps.map(\.displayName) == ["Simulator"])
         #expect(f.risk == .safe && f.category == .simulators)
         #expect(f.items.map(\.id).sorted() == ["DEV-1", "DEV-2"])
         #expect(f.items.map(\.name).sorted() == ["iPhone 15", "iPhone 15 Pro"])

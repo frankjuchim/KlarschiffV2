@@ -81,7 +81,7 @@ public struct OtherCachesScanner: Scanner {
             let ref = AppRef(bundleID: name, processName: nil, displayName: name)
             items.append(FindingItem(
                 id: url.path, url: url, name: name, size: size,
-                blockingApp: ctx.runningApps.running([ref]).first))
+                blockingApp: ctx.runningApps.running([ref]).first, watchedApp: ref))
         }
         guard !items.isEmpty else { return [] }
         return [Finding(
