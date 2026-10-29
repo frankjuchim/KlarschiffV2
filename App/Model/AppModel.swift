@@ -58,6 +58,8 @@ final class AppModel {
     @ObservationIgnored private let deps: AppDependencies
     @ObservationIgnored private var findingsByID: [FindingID: Finding] = [:]
     @ObservationIgnored private var scanGeneration = 0
+    /// Anzeigenamen (Fund-Titel, Item-Namen) des zuletzt ausgeführten Plans – bleiben auch nach dem Neu-Scan lesbar.
+    @ObservationIgnored private var removalLabels: [FindingID: (title: String, items: [String: String])] = [:]
 
     init(dependencies: AppDependencies) {
         deps = dependencies
@@ -237,6 +239,11 @@ final class AppModel {
         }
         isRemoving = true
         removalProgress = "Bereite vor …"
+        var labels: [FindingID: (title: String, items: [String: String])] = [:]
+        for (f, _) in plan.toolSteps + plan.trashSteps + plan.deleteSteps + plan.adminSteps {
+            labels[f.id] = (f.title, Dictionary(f.items.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first }))
+        }
+        removalLabels = labels
         let result = await deps.runner.run(plan) { [weak self] message in
             Task { @MainActor [weak self] in
                 guard let self, self.isRemoving else { return }
@@ -253,6 +260,7 @@ final class AppModel {
     func emptyTrash() async {
         guard !isRemoving, !isScanning else { return }
         isRemoving = true
+        removalLabels = [:]
         removalProgress = "Papierkorb wird geleert …"
         do {
             lastRemoval = try await deps.emptyTrash(dryRun)
@@ -270,6 +278,19 @@ final class AppModel {
     func terminate(_ app: AppRef) async {
         guard await deps.terminate(app) else { return }
         await scan(includeSlowChecks: false)
+    }
+
+    /// Anzeigename eines Ergebnis-Eintrags für das Ergebnis-Banner: „<Fund> – <Eintrag>“.
+    /// Quelle: der zuletzt ausgeführte Plan, sonst der aktuelle Scan, sonst die rohe ID.
+    func label(for result: ItemResult) -> String {
+        let known = removalLabels[result.findingID]
+            ?? findingsByID[result.findingID].map { f in
+                (f.title, Dictionary(f.items.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first }))
+            }
+        guard let itemID = result.itemID else { return known?.title ?? result.findingID.key }
+        let name = known?.items[itemID] ?? itemID
+        guard let title = known?.title else { return name }
+        return "\(title) – \(name)"
     }
 
     // MARK: - Helfer

@@ -340,3 +340,21 @@ private func makeModel(
     #expect(AppModel.category(forScannerID: "personal.backups") == .personalData)
     #expect(AppModel.category(forScannerID: "unknown") == nil)
 }
+
+@Test @MainActor func failureLabelSurvivesRescan() async {
+    let gone = Finding(
+        id: FindingID(scannerID: "test.scanner", key: "gone"), category: .appCaches, title: "Alter Cache",
+        summary: "", risk: .safe, method: .trash, items: [FindingItem(id: "a", url: URL(filePath: "/tmp/klarschiff-test/a"), name: "Datei A", size: 5)],
+        size: 5, blockingApps: [], keepSuggested: false, commandPreview: [], needsFullDiskAccess: false)
+    let scanner = SequencedScanner([[gone], []])
+    let model = makeModel([], scanner: scanner)
+    await model.scan(includeSlowChecks: false)
+
+    await model.execute(model.makePlan(tab: .storage, options: RemovalOptions()))
+
+    #expect(model.report?.findings.isEmpty == true)
+    #expect(model.label(for: ItemResult(findingID: gone.id, itemID: "a", outcome: .failed("x"))) == "Alter Cache – Datei A")
+    #expect(model.label(for: ItemResult(findingID: gone.id, itemID: nil, outcome: .failed("x"))) == "Alter Cache")
+    let unknown = FindingID(scannerID: "system.trash", key: "all")
+    #expect(model.label(for: ItemResult(findingID: unknown, itemID: "foo.txt", outcome: .failed("x"))) == "foo.txt")
+}

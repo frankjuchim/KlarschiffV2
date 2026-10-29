@@ -70,68 +70,10 @@ struct RootView: View {
     @ViewBuilder private var tabContent: some View {
         switch model.selectedTab {
         case .storage, .developer:
-            TemporaryFindingsList(model: model, tab: model.selectedTab)
+            CleanupTabView(tab: model.selectedTab)
+                .environment(model)
         case .systemData, .services, .performance:
             PlaceholderTab(tab: model.selectedTab)
-        }
-    }
-}
-
-/// Vorläufige Fundliste (Titel + Größe je Fund); Task 17 ersetzt sie durch `CleanupTabView`.
-struct TemporaryFindingsList: View {
-    let model: AppModel
-    let tab: AppTab
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(ByteFormat.string(model.selectedSize(in: tab)))
-                        .font(.system(size: 40, weight: .heavy, design: .rounded))
-                        .monospacedDigit()
-                    Text("ausgewählt von \(ByteFormat.string(model.foundSize(in: tab))) gefunden")
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                if model.isScanning {
-                    ProgressView(value: model.scanProgress) {
-                        Text("Scanne …").font(.callout)
-                    }
-                    .frame(width: 200)
-                }
-            }
-            .glassCard(padding: 24)
-
-            ForEach(model.findings(in: tab), id: \.0) { category, findings in
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Label(category.title, systemImage: category.symbol)
-                            .font(.title3.weight(.bold))
-                        Spacer()
-                        Text(ByteFormat.string(findings.reduce(0) { $0 + ($1.size ?? 0) }))
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                    }
-                    VStack(spacing: 0) {
-                        ForEach(findings) { finding in
-                            HStack {
-                                Image(systemName: model.isSelected(finding.id) ? "checkmark.circle.fill" : "circle")
-                                    .foregroundStyle(model.isSelected(finding.id) ? Theme.violet : .secondary)
-                                Text(finding.title)
-                                Text(finding.risk.label)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Spacer()
-                                Text(finding.size.map(ByteFormat.string) ?? "–")
-                                    .fontWeight(.semibold)
-                                    .monospacedDigit()
-                            }
-                            .padding(.vertical, 6)
-                        }
-                    }
-                    .glassCard(padding: 16)
-                }
-            }
         }
     }
 }
