@@ -56,6 +56,14 @@ fragt im Hintergrund nie nach Rechten; aufgeräumt wird nur in der App, wenn du 
 `"Klarschiff 2.app/Contents/MacOS/Klarschiff 2" --check`. Eine Migrationskarte erkennt die alte Aufräum-Automatik
 (zwei Agents, `cleanup.sh` samt Protokollen) und entfernt sie erst nach deiner Bestätigung.
 
+## Hintergrunddienste
+
+Der Tab „Hintergrunddienste“ listet LaunchAgents und -Daemons (ohne Apple) aus `~/Library/LaunchAgents`,
+`/Library/LaunchAgents` und `/Library/LaunchDaemons` sowie Anmeldeobjekte, erklärt sie mit Bereich, Startart und
+„läuft gerade“ und erkennt **verwaiste** Dienste, deren Programm oder App fehlt. Nur diese lassen sich nach Bestätigung
+entfernen (Benutzerdienste per `launchctl bootout` und Papierkorb, Einträge unter `/Library` mit einer Passwortabfrage);
+alle anderen Dienste und Anmeldeobjekte werden nur erklärt. Livetest: `KLARSCHIFF_LIVE_SCAN=1 swift test --package-path Packages/KlarschiffCore --filter liveServices`.
+
 ## Trockenlauf
 
 Im Trockenlauf läuft alles wie gewohnt, es wird aber nichts entfernt. Er ist aktiv, wenn die App mit dem

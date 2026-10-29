@@ -117,6 +117,39 @@ struct LiveScanTests {
         }
     }
 
+    @Test(.enabled(if: liveEnabled), .timeLimit(.minutes(2)))
+    func liveServicesWritesSummary() async throws {
+        let env = ProcessInfo.processInfo.environment
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let cache = try #require(SafetyGuard.userCacheDirectory())
+        let runner = ProcessCommandRunner()
+        let ctx = ScanContext(
+            home: home, userCacheDir: cache, rootPrefix: URL(filePath: "/"), runner: runner,
+            tools: .standard, sizer: SizeMeter(), runningApps: WorkspaceRunningApps(), claims: PathClaims(),
+            now: Date(), hasFullDiskAccess: FullDiskAccess.isGranted(home: home), includeSlowChecks: false)
+        let agents = await LaunchItemScanner().scan(ctx)
+        let login = await LoginItemReader.read(runner: runner)
+        let items = agents + login.items
+
+        func folder(_ i: LaunchItem) -> String { i.plistURL?.deletingLastPathComponent().path.replacingOccurrences(of: home.path, with: "~") ?? "–" }
+        var md = "# Live-Messung Hintergrunddienste (nur lesend)\n\n"
+        md += "Einträge: \(items.count), verwaist: \(items.filter(\.isOrphaned).count), laufend: \(items.filter(\.isRunning).count), Anmeldeobjekte lesbar: \(login.failed ? "nein" : "ja")\n\n## Anzahl je Bereich\n\n"
+        for s in LaunchScope.allCases {
+            let l = items.filter { $0.scope == s }
+            md += "- \(s.title): \(l.count) (verwaist \(l.filter(\.isOrphaned).count), laufend \(l.filter(\.isRunning).count))\n"
+        }
+        md += "\n## Einträge\n\n| Name | Bereich | Label | Startart | läuft | verwaist | Ordner | Erklärung |\n|---|---|---|---|---|---|---|---|\n"
+        for i in items.sorted(by: { ($0.scope.rawValue, $0.label) < ($1.scope.rawValue, $1.label) }) {
+            let note = (i.isOrphaned || i.explanation.contains("nicht gelesen")) ? i.explanation.replacingOccurrences(of: "|", with: "/") : ""
+            md += "| \(i.displayName) | \(i.scope.title) | \(i.label) | \(i.startKind.title) | \(i.isRunning ? "ja" : "nein") | \(i.isOrphaned ? "ja" : "nein") | \(folder(i)) | \(note) |\n"
+        }
+        if let out = env["KLARSCHIFF_LIVE_SCAN_OUT"] {
+            try md.write(toFile: out, atomically: true, encoding: .utf8)
+        } else {
+            print(md)
+        }
+    }
+
     private static func kind(_ m: RemovalMethod) -> String {
         switch m {
         case .trash: "trash"

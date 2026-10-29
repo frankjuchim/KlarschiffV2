@@ -54,6 +54,18 @@
 - Der LaunchAgent des Checks lässt sich ohne Signatur/Team nicht registrieren; die Registrierung und die Hintergrundausführung sind daher nur mit der signierten App prüfbar (hier nur `--check` direkt aufgerufen).
 - Die leere alte `Klarschiff.app` wurde auf Franks Mac nicht gefunden (Erkennung nur für wirklich leere Bundles).
 
+## Stand Teilprojekt 4 – Hintergrunddienste (30.10.2026)
+- Tab „Hintergrunddienste“: listet LaunchAgents/-Daemons (ohne `com.apple.*`) und Anmeldeobjekte, erklärt sie, erkennt verwaiste Dienste und entfernt sie nach Bestätigung (Benutzer: `bootout` + Papierkorb; /Library: Admin, eine Passwortabfrage). Nicht verwaiste Dienste und Anmeldeobjekte werden nie entfernt. Der automatische Check meldet neu verwaiste Dienste.
+- Lese-Prüfung auf Franks Mac: 17 Einträge (Benutzer 5, Alle Benutzer 6, System 6), 0 verwaist, 1 läuft (Logi Options). Anmeldeobjekte konnten in der Agent-Sitzung nicht gelesen werden (`sfltool dumpbtm` ohne Ausgabe). Details: Abnahme-Abschnitt „Teilprojekt 4“. Opt-in-Livetest `liveServicesWritesSummary` (`KLARSCHIFF_LIVE_SCAN=1`).
+
+### Offen für Frank (TP4)
+- [ ] Tab in `--dry-run` ansehen; Anmeldeobjekte prüfen (`sfltool dumpbtm` im Terminal).
+- [ ] Verwaisten Benutzer-Agent (ggf. Dummy) echt entfernen; optional einen /Library-Eintrag (eine Passwortabfrage); mit `launchctl list` prüfen.
+
+### Bekannte Abweichungen Teilprojekt 4
+- Anmeldeobjekte: nur BTM-Typ „login item“; „app“-Einträge dienen nur der Namensauflösung. Andere BTM-Typen (z. B. Agent/Daemon über `SMAppService`) erscheinen nicht als Anmeldeobjekt.
+- Apple-Dienste ohne `com.apple.`-Präfix gelten nicht als Apple-Dienste durch das Präfix, sind aber geschützt (nie als entfernbar angeboten).
+
 ## Startnachricht für die Sitzung auf dem Mac
 > Lies CLAUDE.md und docs/UEBERGABE.md. Setze den Plan docs/superpowers/plans/2026-10-29-klarschiff2-teilprojekt1.md mit superpowers:subagent-driven-development um, beginnend bei Task 1. Branch: claude/intelligent-galileo-8ok14a. Nach jedem Task committen und pushen.
 
