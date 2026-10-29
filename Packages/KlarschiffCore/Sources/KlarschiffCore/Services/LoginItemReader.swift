@@ -65,12 +65,14 @@ public enum LoginItemReader {
             let name = e["Name"]
                 ?? e["Parent Identifier"].flatMap { namesByIdentifier[$0] }
                 ?? url.map(lastComponent) ?? identifier
-            let enabled = (e["Disposition"] ?? "").contains("enabled")
+            // „disallowed“ = Schalter „Im Hintergrund erlauben“ aus → startet nicht.
+            let flags = Set((e["Disposition"] ?? "").split(whereSeparator: { "[], ".contains($0) }).map(String.init).filter { !$0.hasPrefix("0x") })
+            let enabled = flags.contains("enabled") && flags.contains("allowed") && !flags.contains("disallowed")
             var bundleIDs: [String] = []
             if let b = e["Bundle Identifier"] { bundleIDs.append(b) }
             let explanation = enabled
                 ? "Startet bei jeder Anmeldung."
-                : "Startet nicht bei der Anmeldung (ausgeschaltet)."
+                : "Ist in den Systemeinstellungen ausgeschaltet."
             result.append(LaunchItem(
                 id: "loginItem/\(identifier)", label: identifier, scope: .loginItem,
                 associatedBundleIDs: bundleIDs, startKind: enabled ? .atLogin : .onDemand,

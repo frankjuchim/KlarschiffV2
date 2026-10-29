@@ -22,12 +22,25 @@ struct LoginItemReaderTests {
 
     @Test func dispositionDecidesStartKindAndNote() throws {
         let items = LoginItemReader.parse(try fixtureText(), uid: 501)
-        let enabled = try #require(items.first { $0.displayName == "StartHelfer" })
-        #expect(enabled.startKind == .atLogin)
-        #expect(!enabled.explanation.contains("ausgeschaltet"))
-        let off = try #require(items.first { $0.displayName == "TunnelHelfer" })
+        let on = try #require(items.first { $0.displayName == "Namenlos" })  // [enabled, allowed, notified]
+        #expect(on.startKind == .atLogin)
+        #expect(!on.explanation.contains("ausgeschaltet"))
+        let blocked = try #require(items.first { $0.displayName == "StartHelfer" })  // [enabled, disallowed, notified]
+        #expect(blocked.startKind != .atLogin)
+        #expect(blocked.explanation.contains("ausgeschaltet"))
+        let off = try #require(items.first { $0.displayName == "TunnelHelfer" })  // [disabled, allowed, notified]
         #expect(off.startKind != .atLogin)
         #expect(off.explanation.contains("ausgeschaltet"))
+    }
+
+    @Test func appsDevelopersAndLegacyAreIgnored() throws {
+        let items = LoginItemReader.parse(try fixtureText(), uid: 501)
+        let labels = Set(items.map(\.label))
+        #expect(!labels.contains("2.com.beispiel.fensterdock"))
+        #expect(!labels.contains("2.com.beispiel.musikplayer"))
+        #expect(!labels.contains("Unknown Developer"))
+        #expect(!labels.contains("Beispiel Notizen"))
+        #expect(!labels.contains("8.com.beispiel.notizen.sync"))
     }
 
     @Test func nameFallbackViaParentThenURL() throws {
@@ -44,7 +57,23 @@ struct LoginItemReaderTests {
 
     @Test func brokenFormatYieldsEmpty() {
         #expect(LoginItemReader.parse("", uid: 501).isEmpty)
-        #expect(LoginItemReader.parse("kein sfltool\nRecords for UID\n Type: login item (0x4)\n", uid: 501).isEmpty)
+        let truncated = """
+        ========================
+         Records for UID 501 : 65D40751-B802-4128-9E74-E5AF14514695
+        ========================
+
+         Items:
+
+         #1:
+                         UUID: 33333333-AAAA-4BBB-8CCC-000000000001
+                         Name: Halb
+                         Type: login it
+                  Disposition: [enab
+         #2:
+                         Type: login item (0x4)
+        garbage ::: ###
+        """
+        #expect(LoginItemReader.parse(truncated, uid: 501).isEmpty)
     }
 
     @Test func readUsesSfltool() async throws {
