@@ -44,3 +44,23 @@ struct SizeMeterTests {
         #expect(r[a]! >= 1_000_000 && r[b]! >= 2_000_000 && r[m] == 0)
     }
 }
+
+@Suite struct SizeMeterMeasureTests {
+    @Test func measureReportsCompleteForReadableTree() async throws {
+        let tree = try FixtureTree()
+        try tree.file("a/f", bytes: 5000)
+        let r = try await SizeMeter().measure(tree.root.appending(path: "a"))
+        #expect(r.complete)
+        #expect(r.size == (try await SizeMeter().size(of: tree.root.appending(path: "a"))))
+    }
+
+    @Test func measureFlagsUnreadableSubfolder() async throws {
+        let tree = try FixtureTree()
+        try tree.file("a/locked/f", bytes: 5000)
+        let locked = tree.root.appending(path: "a/locked")
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: locked.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path) }
+        let r = try await SizeMeter().measure(tree.root.appending(path: "a"))
+        #expect(!r.complete)
+    }
+}

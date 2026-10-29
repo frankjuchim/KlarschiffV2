@@ -7,7 +7,13 @@ public struct SizeMeter: Sendable {
 
     public func size(of url: URL) async throws -> Int64 {
         try Task.checkCancellation()
-        return try Self.measure(url)
+        return try Self.measureTree(url).size
+    }
+
+    /// Wie `size(of:)`, meldet aber zusätzlich, ob alles lesbar war (`complete == false`: ein Unterordner war gesperrt).
+    public func measure(_ url: URL) async throws -> (size: Int64, complete: Bool) {
+        try Task.checkCancellation()
+        return try Self.measureTree(url)
     }
 
     public func sizes(of urls: [URL]) async throws -> [URL: Int64] {
@@ -26,26 +32,28 @@ public struct SizeMeter: Sendable {
         .isRegularFileKey, .linkCountKey, .fileResourceIdentifierKey
     ]
 
-    private static func measure(_ root: URL) throws -> Int64 {
+    private static func measureTree(_ root: URL) throws -> (size: Int64, complete: Bool) {
         let fm = FileManager.default
         // lstat-artig prüfen, ohne Symlinks zu folgen; fehlender Pfad -> 0.
-        guard let attrs = try? fm.attributesOfItem(atPath: root.path) else { return 0 }
+        guard let attrs = try? fm.attributesOfItem(atPath: root.path) else { return (0, true) }
         var seen = Set<AnyHashable>()
         var total: Int64 = 0
         let type = attrs[.type] as? FileAttributeType
         if type != .typeDirectory {
-            return allocated(of: root, seen: &seen)
+            return (allocated(of: root, seen: &seen), true)
         }
         total += allocated(of: root, seen: &seen)
+        var complete = true
         guard let en = fm.enumerator(at: root, includingPropertiesForKeys: keys,
-                                     options: [], errorHandler: { _, _ in true }) else { return total }
+                                     options: [], errorHandler: { _, _ in complete = false; return true })
+        else { return (total, false) }
         var count = 0
         for case let item as URL in en {
             count += 1
             if count % 500 == 0 { try Task.checkCancellation() }
             total += allocated(of: item, seen: &seen)
         }
-        return total
+        return (total, complete)
     }
 
     /// Belegte Größe eines einzelnen Eintrags (Symlink: Größe des Links selbst, nie des Ziels).
