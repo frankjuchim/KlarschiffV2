@@ -46,6 +46,9 @@ final class AppModel {
     var selection: [FindingID: Set<String>] = [:]
     var kept: Set<FindingID> = []
     var lastRemoval: RemovalReport?
+    /// War der Lauf hinter `lastRemoval` ein Trockenlauf? Beim Ausführen festgehalten, damit ein späteres
+    /// Umschalten die Ergebnis-Anzeige nicht umetikettiert.
+    var lastRemovalWasDryRun = false
     /// Läuft gerade eine Entfernung (Aufräumen oder Papierkorb leeren)? Sperrt Scan und weitere Entfernungen.
     var isRemoving = false
     var removalProgress: String?
@@ -271,6 +274,7 @@ final class AppModel {
             }
         }
         lastRemoval = result
+        lastRemovalWasDryRun = plan.options.dryRun
         isRemoving = false
         removalProgress = nil
         refreshSystemState()
@@ -282,8 +286,10 @@ final class AppModel {
         isRemoving = true
         removalLabels = [:]
         removalProgress = "Papierkorb wird geleert …"
+        let runDry = dryRun
         do {
-            lastRemoval = try await deps.emptyTrash(dryRun)
+            lastRemoval = try await deps.emptyTrash(runDry)
+            lastRemovalWasDryRun = runDry
         } catch TrashError.unreadable {
             lastError = AppErrorText.trashUnreadable
         } catch {

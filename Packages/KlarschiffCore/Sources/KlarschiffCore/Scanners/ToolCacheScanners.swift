@@ -57,7 +57,7 @@ public struct CondaScanner: Scanner {
             findings.append(Finding(
                 id: FindingID(scannerID: id, key: inst.path), category: .toolchains,
                 title: "\(name) – ganze Installation",
-                summary: "Die komplette \(name)-Installation samt aller Umgebungen. Entferne sie über die offizielle Deinstallation: erst „anaconda-clean“ ausführen, danach den Ordner löschen. Klarschiff zeigt ihn dir dafür im Finder.",
+                summary: "Die komplette \(name)-Installation samt aller Umgebungen. Entferne sie über die offizielle Deinstallation: erst „anaconda-clean“ ausführen, danach den Ordner löschen. Klarschiff 2 zeigt ihn dir dafür im Finder.",
                 risk: .hintOnly, method: .hint(.revealInFinder(inst)),
                 items: [FindingItem(id: inst.path, url: inst, name: inst.lastPathComponent, size: size)],
                 size: size, blockingApps: [], keepSuggested: false, commandPreview: [], needsFullDiskAccess: false))

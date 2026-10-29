@@ -40,7 +40,7 @@ struct DryRunToggle: View {
 
     var body: some View {
         Toggle("Trockenlauf", isOn: Binding(get: { model.dryRun }, set: { model.setDryRunSetting($0) }))
-            .disabled(model.isDryRunForced)
+            .disabled(model.isDryRunForced || model.isRemoving || model.isScanning)
     }
 }
 

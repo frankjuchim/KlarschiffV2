@@ -13,7 +13,7 @@ struct FindingCard: View {
     private var busy: Bool { model.isScanning || model.isRemoving }
     private var isHint: Bool { AppModel.isHint(finding) }
     /// Ohne Vollzugriff nicht messbar: keine Auswahl, Hinweis statt Größe.
-    private var lacksAccess: Bool { finding.needsFullDiskAccess && finding.size == nil }
+    private var lacksAccess: Bool { Self.lacksAccess(finding) }
     private var selectable: Bool { !isHint && !lacksAccess }
     private var selectableCount: Int { finding.items.filter { $0.blockingApp == nil }.count }
     private var canExpand: Bool { !finding.items.isEmpty || !finding.commandPreview.isEmpty }
@@ -90,8 +90,12 @@ struct FindingCard: View {
     /// Hinweis-Karten ohne messbare Größe zeigen keine Größenspalte (kein „Null Byte“).
     /// „braucht Vollzugriff“ bleibt sichtbar.
     nonisolated static func hidesSizeColumn(_ f: Finding) -> Bool {
-        let lacksAccess = f.needsFullDiskAccess && f.size == nil
-        return f.risk == .hintOnly && (f.size ?? 0) == 0 && !lacksAccess
+        f.risk == .hintOnly && (f.size ?? 0) == 0 && !lacksAccess(f)
+    }
+
+    /// Ohne Vollzugriff nicht messbar (Größe fehlt).
+    nonisolated static func lacksAccess(_ f: Finding) -> Bool {
+        f.needsFullDiskAccess && f.size == nil
     }
 
     private var selectionState: SelectionCircle.State {

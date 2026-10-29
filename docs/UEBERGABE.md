@@ -20,6 +20,7 @@
 - Tests: Core 219 grün (`swift test --package-path Packages/KlarschiffCore`), App-Tests grün (`xcodebuild … CODE_SIGNING_ALLOWED=NO test`).
 - Lese-Scan auf Franks Mac: 85 Funde, 0 Scan-Fehler → `docs/superpowers/plans/2026-10-29-abnahme.md`.
 - Wichtige Abweichungen vom Plan (Begründung in den Commits): Admin-Schritte nur per Allow-List (`/bin/rm` mit geprüften Operanden, `tmutil deletelocalsnapshots <Datum>`), Admin-Skript über `osascript` statt `NSAppleScript`, Werkzeug-Funde sind „ganz oder gar nicht“, neue Scanner-Phase `lateCollector`, `Finding.watchedApps`/`FindingItem.watchedApp` für die App-läuft-Prüfung direkt vor dem Entfernen.
+- Follow-up: Xcode-Archive sind jetzt **ein** Fund (`xcode.archives/all`, je Archiv ein Eintrag). Frühere „Immer behalten“-Einträge für einzelne Archive greifen nicht mehr (verwaist, harmlos) – einzelne Archive behältst du durch Abwählen.
 
 ### Offen für Frank (nicht automatisierbar)
 - [ ] UI in `--dry-run` ansehen (Screenshots/Klicks waren der Sitzung nicht erlaubt).

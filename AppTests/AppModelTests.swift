@@ -510,3 +510,34 @@ private func tempDefaults() -> UserDefaults {
     #expect(ResultBanner.failureText(1) == "1 Eintrag konnte nicht entfernt werden.")
     #expect(ResultBanner.failureText(3) == "3 Einträge konnten nicht entfernt werden.")
 }
+
+@Test @MainActor func removalDryRunFlagRecordedPerRun() async {
+    let safe = finding("safe", category: .appCaches, risk: .safe, items: [item("a", size: 10)])
+    let scanner = SequencedScanner([[safe]])
+
+    // Echter Lauf, danach Schalter an → bleibt „kein Trockenlauf“.
+    let live = makeModel([], dryRun: false, scanner: scanner)
+    await live.scan(includeSlowChecks: false)
+    await live.execute(live.makePlan(tab: .storage, options: RemovalOptions()))
+    #expect(live.lastRemoval != nil)
+    #expect(live.lastRemovalWasDryRun == false)
+    live.setDryRunSetting(true)
+    #expect(live.lastRemovalWasDryRun == false)
+
+    // Trockenlauf, danach Schalter aus → bleibt „Trockenlauf“.
+    let dry = makeModel([safe], dryRun: false)
+    dry.setDryRunSetting(true)
+    await dry.scan(includeSlowChecks: false)
+    await dry.execute(dry.makePlan(tab: .storage, options: RemovalOptions()))
+    #expect(dry.lastRemovalWasDryRun)
+    dry.setDryRunSetting(false)
+    #expect(dry.lastRemovalWasDryRun)
+
+    // Papierkorb leeren übernimmt den Trockenlauf des Laufs.
+    dry.setDryRunSetting(false)
+    await dry.emptyTrash()
+    #expect(dry.lastRemovalWasDryRun == false)
+    dry.setDryRunSetting(true)
+    await dry.emptyTrash()
+    #expect(dry.lastRemovalWasDryRun)
+}

@@ -25,7 +25,7 @@ public struct AppStoreCachesScanner: Scanner {
     private func noAccess() -> Finding {
         Finding(
             id: FindingID(scannerID: id, key: "noAccess"), category: .appCaches, title: Self.title,
-            summary: "Braucht Vollzugriff auf die Festplatte. Erlaube Klarschiff den Zugriff in den Systemeinstellungen unter Datenschutz & Sicherheit, dann kann ich diese Caches auflisten.",
+            summary: "Braucht Vollzugriff auf die Festplatte. Erlaube Klarschiff 2 den Zugriff in den Systemeinstellungen unter Datenschutz & Sicherheit, dann kann ich diese Caches auflisten.",
             risk: .safe, method: .trash, items: [], size: nil, blockingApps: [],
             keepSuggested: false, commandPreview: [], needsFullDiskAccess: true)
     }

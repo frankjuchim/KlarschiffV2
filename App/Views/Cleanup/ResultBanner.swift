@@ -63,7 +63,7 @@ struct ResultBanner: View {
 
     private var freedText: String {
         let base = "\(ByteFormat.string(report.freedBytes)) frei geworden."
-        return model.dryRun ? base + " (Trockenlauf)" : base
+        return model.lastRemovalWasDryRun ? base + " (Trockenlauf)" : base
     }
 
     /// „n Einträge konnten nicht entfernt werden.“ (Einzahl bei genau einem Eintrag).

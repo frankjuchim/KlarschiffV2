@@ -16,7 +16,7 @@ public struct MobileBackupScanner: Scanner {
         Finding(
             id: FindingID(scannerID: id, key: "noAccess"), category: .personalData,
             title: "iPhone-/iPad-Backups",
-            summary: "Braucht Vollzugriff auf die Festplatte. Erlaube Klarschiff den Zugriff in den Systemeinstellungen unter Datenschutz & Sicherheit, dann kann ich die Backups auflisten.",
+            summary: "Braucht Vollzugriff auf die Festplatte. Erlaube Klarschiff 2 den Zugriff in den Systemeinstellungen unter Datenschutz & Sicherheit, dann kann ich die Backups auflisten.",
             risk: .review, method: .trash, items: [], size: nil, blockingApps: [],
             keepSuggested: false, commandPreview: [], needsFullDiskAccess: true)
     }
@@ -96,7 +96,7 @@ public struct MessagesAttachmentsScanner: Scanner {
 
     public func scan(_ ctx: ScanContext) async throws -> [Finding] {
         let dir = ctx.homePath("Library/Messages/Attachments")
-        let summary = "Bilder, Videos und Dateien aus deinen Unterhaltungen in Nachrichten. Klarschiff löscht sie nicht selbst: Stelle in Nachrichten → Einstellungen → Nachrichten behalten auf „1 Jahr“, oder prüfe die Größe unter Systemeinstellungen → Allgemein → Speicher."
+        let summary = "Bilder, Videos und Dateien aus deinen Unterhaltungen in Nachrichten. Klarschiff 2 löscht sie nicht selbst: Stelle in Nachrichten → Einstellungen → Nachrichten behalten auf „1 Jahr“, oder prüfe die Größe unter Systemeinstellungen → Allgemein → Speicher."
         guard ctx.hasFullDiskAccess else {
             return [Finding(
                 id: FindingID(scannerID: id, key: "noAccess"), category: .personalData,
