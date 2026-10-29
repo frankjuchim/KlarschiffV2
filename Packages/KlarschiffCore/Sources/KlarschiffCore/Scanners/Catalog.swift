@@ -6,7 +6,9 @@ public enum Catalog {
     public static func allScanners() -> [Scanner] {
         pathRules().map { PathScanner(rule: $0) } + [SnapshotScanner(), SoftwareUpdateScanner(), SimulatorRuntimeScanner(), UnavailableSimulatorsScanner(), HomebrewCleanupScanner(), HomebrewCaskScanner(),
             CondaScanner(), OllamaScanner(), RustupScanner(),
-            VersionedDirScanner.deviceSupport, VersionedDirScanner.nvm, VersionedDirScanner.pyenv, VersionedDirScanner.rbenv]
+            VersionedDirScanner.deviceSupport, VersionedDirScanner.nvm, VersionedDirScanner.pyenv, VersionedDirScanner.rbenv,
+            TeXLiveScanner(), MobileBackupScanner(), OldInstallerScanner(), MessagesAttachmentsScanner(),
+            UnusedAppsScanner(), LeftoverAppDataScanner(), ExtraXcodeScanner()]
     }
 
     /// Regel zu einer ID (für Tests und Neu-Scans einzelner Regeln). Unbekannte ID ist ein Programmierfehler.
