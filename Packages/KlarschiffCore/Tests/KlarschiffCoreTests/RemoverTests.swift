@@ -200,6 +200,18 @@ private func item(_ id: String, _ url: URL?, size: Int64? = 10) -> FindingItem {
         }
     }
 
+    @Test(arguments: [("/Library/Caches/a", true), ("/library/caches/A", true), ("/Library/Logs/a/b", true),
+                      ("/Library/Caches/a/b", false), ("/LIBRARY/caches/a/b/c", false)])
+    func adminRmLibraryCachesOnlyDirectChildren(_ c: (String, Bool)) async throws {
+        let tree = try FixtureTree()
+        let (g, _) = makeGuard(tree)
+        let ex = FakeExecutor(fixed: .completed([0]))
+        let fnd = finding(.admin([AdminStep(executable: "/bin/rm", arguments: ["-rf", c.0])]), items: [item("a", nil)])
+        let r = await AdminRemover(executor: ex, guard: g).remove([(fnd, fnd.items)], dryRun: false)
+        #expect(ex.runs.isEmpty != c.1, "\(c.0)")
+        if !c.1 { #expect(r[0].outcome == .failed("Gesperrt: Pfad nicht eindeutig"), "\(c.0)") }
+    }
+
     @Test func adminAllowsLogEraseAll() async throws {
         let tree = try FixtureTree()
         let (g, _) = makeGuard(tree)

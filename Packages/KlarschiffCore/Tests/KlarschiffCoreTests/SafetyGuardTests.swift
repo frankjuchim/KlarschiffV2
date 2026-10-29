@@ -29,7 +29,7 @@ private let guardWithTemp = SafetyGuard(
                       "/System/Volumes/Data/System/Library/AssetsV2/x"])
     func deniesOtherSystemPaths(_ p: String) { #expect(guardWithTemp.check(URL(filePath: p)) != .allowed, "\(p)") }
 
-    @Test func tempAndLibraryNotAllowedWithoutTempDir() {
+    @Test func tempNotAllowedWithoutTempDir() {
         #expect(guardUnderTest.check(URL(filePath: "/private/var/folders/ab/xyz/T/old.tmp")) != .allowed)
     }
 

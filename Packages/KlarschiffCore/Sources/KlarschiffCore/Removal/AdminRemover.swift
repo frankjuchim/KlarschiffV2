@@ -141,6 +141,9 @@ public struct AdminRemover: Sendable {
             guard arg.hasPrefix("/") else { return .denied("Liegt außerhalb der erlaubten Ordner") }
             // rm bekommt den Rohstring: nur exakt die normalisierte Form, die der Guard prüft (kein Folgen von Symlink/).
             if !Self.isNormalizedAbsolute(arg) { return .denied("Pfad nicht eindeutig") }
+            // /Library/Caches ist für alle beschreibbar: nur direkte Kinder (rm folgt Zwischen-Symlinks als root).
+            let lower = arg.lowercased().split(separator: "/").map(String.init)
+            if lower.count > 3, lower[0] == "library", lower[1] == "caches" { return .denied("Pfad nicht eindeutig") }
             if case .denied(let r) = safety.check(URL(filePath: arg)) { return .denied(r) }
         }
         return targets == 0 ? .denied("Kein Ziel angegeben") : .allowed
