@@ -98,7 +98,7 @@ public struct AdminRemover: Sendable {
         return results
     }
 
-    private static let snapshotDate = try! NSRegularExpression(pattern: #"^\d{4}-\d{2}-\d{2}-\d{6}$"#)
+    private static let snapshotDate = try! NSRegularExpression(pattern: #"\A[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{6}\z"#)
 
     /// Allow-List: nur `/bin/rm` (jeder Operand geprüft) und `tmutil deletelocalsnapshots <Datum>`.
     private func verdict(for step: AdminStep) -> SafetyVerdict {
@@ -114,6 +114,8 @@ public struct AdminRemover: Sendable {
         }
     }
 
+    private static let knownRmOptions: Set<String> = ["-r", "-f", "-R", "-rf", "-fr", "-Rf", "-fR"]
+
     /// BSD-`rm` beendet Optionen am ersten Nicht-Option-Argument (oder `--`); alles danach ist ein Operand.
     private func rmVerdict(_ args: [String]) -> SafetyVerdict {
         var optionsEnded = false
@@ -121,7 +123,10 @@ public struct AdminRemover: Sendable {
         for arg in args {
             if !optionsEnded {
                 if arg == "--" { optionsEnded = true; continue }
-                if arg.hasPrefix("-") { continue }
+                if arg.hasPrefix("-") {
+                    if Self.knownRmOptions.contains(arg) { continue }
+                    return .denied("Unbekannte rm-Option")
+                }
                 optionsEnded = true
             }
             targets += 1

@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import Synchronization
 @testable import KlarschiffCore
 
 private func makeGuard(_ tree: FixtureTree) -> (SafetyGuard, URL) {
@@ -34,12 +35,15 @@ private func item(_ id: String, _ url: URL?, size: Int64? = 10) -> FindingItem {
     @Test func trashRemoverMovesFile() async throws {
         let tree = try FixtureTree()
         let (g, _) = makeGuard(tree)
-        let f = try tree.file("home/Library/Caches/foo/a.bin", bytes: 4)
-        let r = await TrashRemover(guard: g).remove(finding(.trash), items: [item("a", f, size: 4)], dryRun: false)
-        defer { try? FileManager.default.removeItem(at: FileManager.default.homeDirectoryForCurrentUser.appending(path: ".Trash/a.bin")) }
+        let f = try tree.file("home/Library/Caches/foo/\(UUID().uuidString).bin", bytes: 4)
+        let trashed = Mutex<URL?>(nil)
+        defer { if let u = trashed.withLock({ $0 }) { try? FileManager.default.removeItem(at: u) } }
+        let remover = TrashRemover(guard: g, onTrashed: { u in trashed.withLock { $0 = u } })
+        let r = await remover.remove(finding(.trash), items: [item("a", f, size: 4)], dryRun: false)
         #expect(r.count == 1 && r[0].itemID == "a")
         #expect(r[0].outcome == .removed(freed: 4))
         #expect(!FileManager.default.fileExists(atPath: f.path))
+        #expect(trashed.withLock { $0 } != nil)
     }
 
     @Test func deleteRemoverDeletes() async throws {
@@ -165,6 +169,23 @@ private func item(_ id: String, _ url: URL?, size: Int64? = 10) -> FindingItem {
         guard case .failed = r[0].outcome else { Issue.record("expected failed"); return }
     }
 
+    @Test func adminRmUnknownOptionsDenied() async throws {
+        let tree = try FixtureTree()
+        let (g, _) = makeGuard(tree)
+        for args in [["-rf", "-", "/usr/local/texlive/2022"], ["-i", "/usr/local/texlive/2022"],
+                     ["-P", "/usr/local/texlive/2022"], ["-x", "/usr/local/texlive/2022"], ["-rfv", "/usr/local/texlive/2022"]] {
+            let ex = FakeExecutor(fixed: .completed([0]))
+            let fnd = finding(.admin([AdminStep(executable: "/bin/rm", arguments: args)]), items: [item("a", nil)])
+            let r = await AdminRemover(executor: ex, guard: g).remove([(fnd, fnd.items)], dryRun: false)
+            #expect(ex.runs.isEmpty, "\(args)")
+            #expect(r[0].outcome == .failed("Gesperrt: Unbekannte rm-Option"), "\(args)")
+        }
+        let ex = FakeExecutor(fixed: .completed([0]))
+        let ok = finding(.admin([rm("-Rf", "--", "/usr/local/texlive/2022")]), items: [item("a", nil)])
+        _ = await AdminRemover(executor: ex, guard: g).remove([(ok, ok.items)], dryRun: false)
+        #expect(ex.runs.count == 1)
+    }
+
     @Test func adminAllowListDeniesUnknownTools() async throws {
         let tree = try FixtureTree()
         let (g, _) = makeGuard(tree)
@@ -174,6 +195,7 @@ private func item(_ id: String, _ url: URL?, size: Int64? = 10) -> FindingItem {
             AdminStep(executable: "/usr/bin/tmutil", arguments: ["deletelocalsnapshots", "/"]),
             AdminStep(executable: "/usr/bin/tmutil", arguments: ["thinlocalsnapshots", "2026-01-01-120000"]),
             AdminStep(executable: "/usr/bin/tmutil", arguments: ["deletelocalsnapshots", "2026-01-01"]),
+            AdminStep(executable: "/usr/bin/tmutil", arguments: ["deletelocalsnapshots", "2026-01-01-120000\n"]),
             AdminStep(executable: "/usr/bin/tmutil", arguments: ["deletelocalsnapshots", "2026-01-01-120000", "x"]),
         ]
         for step in bad {
