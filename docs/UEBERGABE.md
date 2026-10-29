@@ -44,3 +44,8 @@
 
 ## Danach
 Teilprojekte 3–5 (Automatischer Check + Migration alter Agents, Hintergrunddienste, Leistung) jeweils mit eigenem Brainstorming → Spec → Plan. Offene Fragen dafür: Menüleisten-Icon ja/nein, Schwellen des Wachstumswächters.
+
+## Bekannte Abweichungen Teilprojekt 2
+- `log erase`: Bei Exit ≠ 0 zeigt die Entfernung nur „Exit N“ statt gekürzter stderr (Spec §7), weil der `PrivilegedExecutor` nur Exit-Codes liefert; nachrüstbar, wenn er Ausgaben durchreicht.
+- Keine eigene „Simulator-Volumes“-Bar im Systemdaten-Tab (Spec-Abweichung); Simulator-Volumes werden nicht doppelt gezählt.
+- Ohne Vollzugriff werden `Desktop`, `Documents`, `Downloads` nicht gemessen (vermeidet Datenschutzabfragen); „Deine Daten“ ist dann eine Untergrenze.

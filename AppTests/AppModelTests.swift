@@ -698,3 +698,26 @@ private final class Counter: Sendable {
     #expect(model.report == nil) // normaler Scan lief nicht
     #expect(model.lastRemoval != nil)
 }
+
+@Test @MainActor func cancelledSystemMeasurementIsDiscardedAndRetried() async {
+    let counter = Counter()
+    let model = makeModel([], measure: { _, _ in
+        counter.bump()
+        if counter.value == 1 { try? await Task.sleep(for: .seconds(30)) }
+        return emptySystemReport([])
+    })
+    let t = Task { await model.measureSystemDataIfNeeded() }
+    while counter.value == 0 { await Task.yield() }
+    t.cancel()
+    await t.value
+    #expect(model.systemData == nil)
+    #expect(model.isMeasuringSystemData == false)
+    await model.measureSystemDataIfNeeded()
+    #expect(counter.value == 2)
+    #expect(model.systemData != nil)
+}
+
+@Test func scannerIDMapsSystemDataPrefixes() {
+    #expect(AppModel.category(forScannerID: "sysdata.temp") == .systemData)
+    #expect(AppModel.category(forScannerID: "systemdata.volumes") == .systemData)
+}

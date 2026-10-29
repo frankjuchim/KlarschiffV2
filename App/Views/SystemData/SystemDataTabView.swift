@@ -40,7 +40,8 @@ struct SystemDataTabView: View {
                 SystemDataSummaryBar { showConfirm = true }
             }
         }
-        .task { await model.measureSystemDataIfNeeded() }
+        // Unstrukturiert: ein Tabwechsel darf die erste Messung nicht abbrechen.
+        .onAppear { Task { await model.measureSystemDataIfNeeded() } }
         // Der erste Versuch kann an einem laufenden Scan/Aufräumen scheitern: danach erneut versuchen.
         .onChange(of: busy) { _, isBusy in
             guard !isBusy else { return }

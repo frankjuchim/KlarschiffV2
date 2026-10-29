@@ -1,4 +1,5 @@
 import Testing
+import Synchronization
 import Foundation
 @testable import KlarschiffCore
 
@@ -322,5 +323,34 @@ private func find(_ id: String, in areas: [SystemArea]) -> SystemArea? {
         }
         guard case .failure(.timeout) = result else { Issue.record("kein Timeout"); return }
         #expect(ContinuousClock.now - start < .seconds(2))
+    }
+}
+
+@Suite struct SystemDataPrivacyTests {
+    private func run(fda: Bool) async throws -> (SystemDataReport, [String]) {
+        let tree = try FixtureTree()
+        for n in ["Desktop", "documents", "Downloads", "Pictures"] { _ = try tree.dir("home/\(n)") }
+        let seen = Mutex<[String]>([])
+        let prefix = tree.root.path
+        let scanner = SystemDataScanner(sizeOf: { url in
+            seen.withLock { $0.append(String(url.path.dropFirst(prefix.count))) }
+            return (GB, true)
+        })
+        let r = await scanner.scan(.test(root: tree.root, runner: diskutilOK(), hasFullDiskAccess: fda)) { _, _ in }
+        return (r, seen.withLock { $0 })
+    }
+
+    @Test func withoutFullDiskAccessProtectedFoldersSkipped() async throws {
+        let (r, seen) = try await run(fda: false)
+        #expect(!seen.contains { $0.hasPrefix("/home/Desktop") || $0.lowercased().hasPrefix("/home/documents") || $0.hasPrefix("/home/Downloads") })
+        #expect(seen.contains("/home/Pictures"))
+        #expect(r.userDataIsLowerBound)
+        #expect(r.failures.contains { $0.scannerID == "systemdata.userdata.privacy" })
+    }
+
+    @Test func withFullDiskAccessProtectedFoldersMeasured() async throws {
+        let (r, seen) = try await run(fda: true)
+        #expect(seen.contains("/home/Desktop") && seen.contains("/home/Downloads") && seen.contains("/home/documents"))
+        #expect(!r.failures.contains { $0.scannerID == "systemdata.userdata.privacy" })
     }
 }

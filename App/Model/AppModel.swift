@@ -183,6 +183,13 @@ final class AppModel {
                 self.systemDataProgress = max(self.systemDataProgress, value)
             }
         }
+        // Abgebrochen (z. B. Tabwechsel): Ergebnis wäre „Abgebrochen“-Müll – verwerfen, später neu versuchen.
+        if Task.isCancelled {
+            isMeasuringSystemData = false
+            hasStartedSystemMeasurement = false
+            refreshSystemState()
+            return
+        }
         // Systemfunde sind nie vorausgewählt; alte Auswahl verfällt mit der neuen Messung.
         for id in systemFindingsByID.keys { selection[id] = nil }
         systemData = result
@@ -237,7 +244,7 @@ final class AppModel {
         case "brew": return .homebrew
         case "languages": return .languages
         case "toolchains": return .toolchains
-        case "systemData": return .systemData
+        case "sysdata", "systemdata": return .systemData
         default: return nil
         }
     }

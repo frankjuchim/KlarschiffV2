@@ -58,7 +58,19 @@ public struct SystemDataScanner: Sendable {
                 // Home je direktem Unterordner (auch versteckte, keine Symlinks), höchstens 8 gleichzeitig.
                 let children = Measurer.homeChildren(ctx.home)
                 if children.unreadable { lower = true }
-                let top = await measure.measureAll(children.urls.map { ($0, "userdata.home.\($0.lastPathComponent)") })
+                // Ohne Vollzugriff würde das Messen dieser Ordner macOS-Datenschutzabfragen auslösen.
+                var homeURLs = children.urls
+                if !ctx.hasFullDiskAccess {
+                    let protected: Set<String> = ["desktop", "documents", "downloads"]
+                    let before = homeURLs.count
+                    homeURLs.removeAll { protected.contains($0.lastPathComponent.lowercased()) }
+                    if homeURLs.count != before {
+                        lower = true
+                        f.append(ScanFailure(scannerID: "systemdata.userdata.privacy",
+                            message: "Schreibtisch, Dokumente und Downloads werden erst mit Vollzugriff mitgemessen."))
+                    }
+                }
+                let top = await measure.measureAll(homeURLs.map { ($0, "userdata.home.\($0.lastPathComponent)") })
                 // Zeitüberschreitung: eine Ebene tiefer – Unterordner einzeln, direkte Dateien per Ressourcenwerte.
                 var grandchildren: [(URL, String)] = []
                 for r in top {

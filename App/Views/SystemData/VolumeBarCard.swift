@@ -131,6 +131,7 @@ struct VolumeBarCard: View {
         ]
         return r.failures.compactMap { f in
             if f.scannerID == "systemdata.unaccounted" { return r.inventory == nil ? nil : f.message }
+            if f.scannerID == "systemdata.userdata.privacy" { return f.message }
             if f.scannerID == "systemdata.volumes" { return r.inventory == nil ? nil : f.message }
             if let label = labels[f.scannerID] { return "\(label): \(f.message)" }
             return nil
