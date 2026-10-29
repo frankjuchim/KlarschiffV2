@@ -15,9 +15,12 @@ struct CommandRunnerTests {
     }
 
     @Test func launchFailure() async {
-        await #expect(throws: CommandError.self) {
-            try await ProcessCommandRunner().run("/nonexistent/tool", [], timeout: .seconds(2), environment: [:])
-        }
+        do {
+            _ = try await ProcessCommandRunner().run("/nonexistent/tool", [], timeout: .seconds(2), environment: [:])
+            Issue.record("expected launchFailed")
+        } catch let e as CommandError {
+            guard case .launchFailed = e else { Issue.record("wrong error \(e)"); return }
+        } catch { Issue.record("wrong error \(error)") }
     }
 
     @Test func largeOutputDoesNotDeadlock() async throws {
@@ -33,5 +36,21 @@ struct CommandRunnerTests {
     @Test func nonZeroExit() async throws {
         let r = try await ProcessCommandRunner().run("/usr/bin/false", [], timeout: .seconds(5), environment: [:])
         #expect(!r.succeeded)
+    }
+
+    @Test func timeoutIsBoundedWhenDescendantHoldsPipe() async {
+        let start = ContinuousClock.now
+        await #expect(throws: CommandError.timeout) {
+            try await ProcessCommandRunner().run("/bin/sh", ["-c", "sleep 8 & exec sleep 30"], timeout: .milliseconds(200), environment: [:])
+        }
+        #expect(ContinuousClock.now - start < .seconds(5))
+    }
+
+    @Test func sigtermTrappingChildIsKilled() async {
+        let start = ContinuousClock.now
+        await #expect(throws: CommandError.timeout) {
+            try await ProcessCommandRunner().run("/bin/sh", ["-c", "trap '' TERM; while :; do sleep 1; done"], timeout: .milliseconds(200), environment: [:])
+        }
+        #expect(ContinuousClock.now - start < .seconds(6))
     }
 }

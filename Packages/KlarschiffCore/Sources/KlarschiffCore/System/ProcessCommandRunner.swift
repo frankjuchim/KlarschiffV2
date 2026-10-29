@@ -37,8 +37,8 @@ public struct ProcessCommandRunner: CommandRunner {
         }
         let pid = process.processIdentifier
 
-        async let outData = Self.readAll(outPipe.fileHandleForReading)
-        async let errData = Self.readAll(errPipe.fileHandleForReading)
+        let outDrain = Drain(outPipe.fileHandleForReading)
+        let errDrain = Drain(errPipe.fileHandleForReading)
 
         let watchdog = Task {
             do { try await Task.sleep(for: timeout) } catch { return }
@@ -57,18 +57,60 @@ public struct ProcessCommandRunner: CommandRunner {
             if process.isRunning { process.terminate() }
         }
         watchdog.cancel()
-        let out = await outData
-        let err = await errData
+        // Nachkommen können die Pipe-Enden offen halten: nur kurz auf EOF warten, dann abbrechen.
+        await Self.waitForDrains([outDrain, errDrain], grace: .seconds(1))
+        let out = outDrain.finish()
+        let err = errDrain.finish()
 
         if timedOut.load(ordering: .sequentiallyConsistent) { throw CommandError.timeout }
         if Task.isCancelled { throw CancellationError() }
         return CommandResult(exitCode: status, stdout: out, stderr: err)
     }
 
-    private static func readAll(_ handle: FileHandle) async -> String {
-        await Task.detached {
-            let data = (try? handle.readToEnd()) ?? Data()
-            return String(decoding: data, as: UTF8.self)
-        }.value
+    private static func waitForDrains(_ drains: [Drain], grace: Duration) async {
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask {
+                for d in drains { await d.waitForEOF() }
+            }
+            group.addTask { try? await Task.sleep(for: grace) }
+            await group.next()
+            group.cancelAll()
+        }
+    }
+}
+
+/// Liest eine Pipe über `readabilityHandler` (hält keinen Thread des Cooperative Pools).
+private final class Drain: Sendable {
+    private struct State { var data = Data(); var eof = false }
+    private let handle: FileHandle
+    private let state = Mutex(State())
+    private let eofStream = AsyncStream<Void>.makeStream()
+
+    init(_ handle: FileHandle) {
+        self.handle = handle
+        let continuation = eofStream.continuation
+        handle.readabilityHandler = { [self] h in
+            let chunk = h.availableData
+            if chunk.isEmpty {
+                h.readabilityHandler = nil
+                state.withLock { $0.eof = true }
+                continuation.yield()
+                continuation.finish()
+            } else {
+                state.withLock { $0.data.append(chunk) }
+            }
+        }
+    }
+
+    func waitForEOF() async {
+        for await _ in eofStream.stream { return }
+    }
+
+    /// Beendet das Lesen (falls noch offen), schließt das Handle und liefert den Text.
+    func finish() -> String {
+        handle.readabilityHandler = nil
+        try? handle.close()
+        eofStream.continuation.finish()
+        return String(decoding: state.withLock { $0.data }, as: UTF8.self)
     }
 }
