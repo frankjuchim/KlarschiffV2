@@ -9,10 +9,12 @@ struct ConfirmSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var options = RemovalOptions()
     @State private var showCommands = false
+    @State private var acknowledged = false
 
     var body: some View {
         let plan = model.makePlan(tab: tab, options: options)
         let groups = Self.groups(for: plan)
+        let needsAck = Self.requiresSystemAcknowledgement(plan)
         VStack(alignment: .leading, spacing: 16) {
             Text("\(ByteFormat.string(plan.totalSize)) aufräumen?")
                 .font(.title2.weight(.bold))
@@ -20,6 +22,10 @@ struct ConfirmSheet: View {
                 Label("Trockenlauf – es wird nichts entfernt.", systemImage: "flask")
                     .font(.callout.weight(.semibold))
                     .foregroundStyle(.orange)
+            }
+
+            if needsAck {
+                SystemWarningCard(lines: Self.systemWarningLines(plan), acknowledged: $acknowledged)
             }
 
             ScrollView {
@@ -69,7 +75,7 @@ struct ConfirmSheet: View {
                 }
                 .buttonStyle(GradientButtonStyle())
                 .keyboardShortcut(Self.allowsDefaultAction(plan) ? .defaultAction : nil)
-                .disabled(groups.isEmpty || model.isScanning || model.isRemoving)
+                .disabled(groups.isEmpty || model.isScanning || model.isRemoving || model.isMeasuringSystemData || (needsAck && !acknowledged))
             }
         }
         .padding(24)
@@ -80,8 +86,26 @@ struct ConfirmSheet: View {
     }
 
     /// Return löst „Aufräumen“ nur aus, wenn nichts endgültig gelöscht wird und keine Admin-Schritte anstehen.
+    /// Bei Systemfunden nie: dort muss das Häkchen bewusst gesetzt werden.
     nonisolated static func allowsDefaultAction(_ plan: RemovalPlan) -> Bool {
-        plan.deleteSteps.isEmpty && plan.adminSteps.isEmpty
+        !requiresSystemAcknowledgement(plan) && plan.deleteSteps.isEmpty && plan.adminSteps.isEmpty
+    }
+
+    /// Plant der Plan mindestens einen Systemfund, braucht „Aufräumen“ das Häkchen der Warnkarte.
+    nonisolated static func requiresSystemAcknowledgement(_ plan: RemovalPlan) -> Bool {
+        (plan.toolSteps + plan.trashSteps + plan.deleteSteps + plan.adminSteps)
+            .contains { $0.0.category == .systemData }
+    }
+
+    /// Warnzeilen der geplanten Systemfunde: erster Satz der Zusammenfassung („Achtung: …“).
+    nonisolated static func systemWarningLines(_ plan: RemovalPlan) -> [String] {
+        (plan.toolSteps + plan.trashSteps + plan.deleteSteps + plan.adminSteps)
+            .map(\.0).filter { $0.category == .systemData }.map { firstSentence($0.summary) }
+    }
+
+    nonisolated static func firstSentence(_ text: String) -> String {
+        guard let r = text.range(of: ". ") else { return text }
+        return String(text[..<r.lowerBound]) + "."
     }
 
     // MARK: - Optionen
@@ -172,6 +196,29 @@ struct ConfirmSheet: View {
                 emphasized: true, rows: rows(plan.adminSteps)))
         }
         return out
+    }
+}
+
+private struct SystemWarningCard: View {
+    let lines: [String]
+    @Binding var acknowledged: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Du entfernst Systemdateien", systemImage: "exclamationmark.triangle.fill")
+                .font(.headline)
+                .foregroundStyle(.red)
+            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                Text(line).font(.callout)
+            }
+            Toggle("Ich habe verstanden, dass Systemdateien entfernt werden.", isOn: $acknowledged)
+                .toggleStyle(.checkbox)
+                .fontWeight(.semibold)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.red.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.red.opacity(0.5)))
     }
 }
 

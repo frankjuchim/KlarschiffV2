@@ -75,6 +75,9 @@ private func makeModel(
     scanner: (any KlarschiffCore.Scanner)? = nil,
     emptyTrash: @escaping @Sendable (Bool) async throws -> RemovalReport = { _ in
         RemovalReport(results: [], freedBytes: 0, failures: [])
+    },
+    measure: @escaping @Sendable (ScanContext, @escaping @Sendable (Int, Int) -> Void) async -> SystemDataReport = { _, _ in
+        emptySystemReport([])
     }
 ) -> AppModel {
     let disk: @Sendable () throws -> DiskSpace = { DiskSpace(free: 100, total: 1_000) }
@@ -101,9 +104,16 @@ private func makeModel(
         trash: { _ in 0 },
         fullDiskAccess: { true },
         emptyTrash: emptyTrash,
+        measureSystemData: measure,
         dryRun: dryRun,
         terminate: { _ in false })
     return AppModel(dependencies: deps, defaults: defaults)
+}
+
+private func emptySystemReport(_ cleanup: [Finding]) -> SystemDataReport {
+    SystemDataReport(
+        measuredAt: Date(), inventory: nil, areas: [], userData: 0, systemAreasTotal: 0, unaccounted: 0,
+        snapshotFindings: [], cleanupFindings: cleanup, failures: [])
 }
 
 /// Frische, leere UserDefaults-Suite je Test.
@@ -566,4 +576,89 @@ private let finderCall = ["/usr/bin/osascript", "-e", "tell application \"Finder
     dry.setDryRunSetting(true)
     await dry.emptyTrash()
     #expect(dry.lastRemovalWasDryRun)
+}
+
+// MARK: - Systemdaten
+
+private func systemFinding(_ key: String = "caches") -> Finding {
+    let step = AdminStep(executable: "/bin/rm", arguments: ["-rf", "/Library/Caches/x"])
+    return Finding(
+        id: FindingID(scannerID: "systemData.caches", key: key), category: .systemData, title: key,
+        summary: "Achtung: Das ist wichtig. Mehr Text.", risk: .review, method: .admin([step]),
+        items: [FindingItem(id: "x", url: URL(filePath: "/Library/Caches/x"), name: "x", size: 500)], size: 500,
+        blockingApps: [], keepSuggested: false, commandPreview: [], needsFullDiskAccess: false)
+}
+
+private final class Counter: Sendable {
+    private let n = Mutex(0)
+    var value: Int { n.withLock { $0 } }
+    func bump() { n.withLock { $0 += 1 } }
+}
+
+@Test @MainActor func systemDataMeasuredOnceOnFirstOpen() async {
+    let counter = Counter()
+    let sys = systemFinding()
+    let model = makeModel([], measure: { _, _ in counter.bump(); return emptySystemReport([sys]) })
+    await model.measureSystemDataIfNeeded()
+    await model.measureSystemDataIfNeeded()
+    #expect(counter.value == 1)
+    #expect(model.systemData != nil)
+    #expect(model.isMeasuringSystemData == false)
+}
+
+@Test @MainActor func systemFindingsNotPreselectedAndPlannable() async {
+    let sys = systemFinding()
+    let model = makeModel([], measure: { _, _ in emptySystemReport([sys]) })
+    await model.measureSystemData()
+    #expect(model.selection.isEmpty)
+    #expect(model.findings(in: .systemData).flatMap(\.1).map(\.id) == [sys.id])
+    model.toggle(sys.id)
+    #expect(model.selectedSize(in: .systemData) == 500)
+    let plan = model.makePlan(tab: .systemData, options: RemovalOptions())
+    #expect(plan.adminSteps.count == 1)
+    // Ein normaler Scan darf die Auswahl der Systemfunde nicht löschen.
+    await model.scan(includeSlowChecks: false)
+    #expect(model.isSelected(sys.id))
+}
+
+@Test @MainActor func scanAndMeasureExcludeEachOther() async {
+    let counter = Counter()
+    let model = makeModel([], measure: { _, _ in counter.bump(); return emptySystemReport([]) })
+    model.isScanning = true
+    await model.measureSystemData()
+    #expect(counter.value == 0)
+    model.isScanning = false
+    model.isMeasuringSystemData = true
+    await model.scan(includeSlowChecks: false)
+    #expect(model.report == nil)
+}
+
+@Test func systemPlanRequiresAcknowledgementAndNoDefault() {
+    let sys = systemFinding()
+    let plan = RemovalPlan(findings: [sys], selection: [sys.id: ["x"]], options: RemovalOptions())
+    #expect(ConfirmSheet.requiresSystemAcknowledgement(plan))
+    #expect(!ConfirmSheet.allowsDefaultAction(plan))
+    let other = finding("t", category: .appCaches, risk: .safe, items: [item("a", size: 1)])
+    let p2 = RemovalPlan(findings: [other], selection: [other.id: ["a"]], options: RemovalOptions())
+    #expect(!ConfirmSheet.requiresSystemAcknowledgement(p2))
+}
+
+@Test func systemWarningLinesAreFirstSentence() {
+    let sys = systemFinding()
+    let plan = RemovalPlan(findings: [sys], selection: [sys.id: ["x"]], options: RemovalOptions())
+    #expect(ConfirmSheet.systemWarningLines(plan) == ["Achtung: Das ist wichtig."])
+    #expect(ConfirmSheet.firstSentence("Ohne Punkt") == "Ohne Punkt")
+}
+
+@Test @MainActor func executeSystemPlanRemeasures() async {
+    let counter = Counter()
+    let sys = systemFinding()
+    let model = makeModel([], measure: { _, _ in counter.bump(); return emptySystemReport([sys]) })
+    await model.measureSystemData()
+    model.toggle(sys.id)
+    let plan = model.makePlan(tab: .systemData, options: RemovalOptions())
+    await model.execute(plan)
+    #expect(counter.value == 2)
+    #expect(model.report == nil) // normaler Scan lief nicht
+    #expect(model.lastRemoval != nil)
 }

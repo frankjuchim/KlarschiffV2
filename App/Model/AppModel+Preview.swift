@@ -42,6 +42,11 @@ extension AppDependencies {
             trash: { _ in 279_900_000 },
             fullDiskAccess: { false },
             emptyTrash: { _ in RemovalReport(results: [], freedBytes: 0, failures: []) },
+            measureSystemData: { _, _ in
+                SystemDataReport(
+                    measuredAt: Date(), inventory: nil, areas: [], userData: 0, systemAreasTotal: 0, unaccounted: 0,
+                    snapshotFindings: [], cleanupFindings: [], failures: [])
+            },
             dryRun: true,
             terminate: { _ in false })
     }

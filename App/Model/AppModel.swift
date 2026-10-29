@@ -38,6 +38,8 @@ struct AppDependencies: Sendable {
     var fullDiskAccess: @Sendable () -> Bool
     /// Leert den Papierkorb über den Finder; wirft `EmptyTrashError`.
     var emptyTrash: @Sendable (_ dryRun: Bool) async throws -> RemovalReport
+    /// Misst die Systemdaten (nur lesend); meldet Fortschritt als (fertig, gesamt).
+    var measureSystemData: @Sendable (ScanContext, @escaping @Sendable (Int, Int) -> Void) async -> SystemDataReport
     var dryRun: Bool
     var terminate: @Sendable (AppRef) async -> Bool
 }
@@ -65,6 +67,10 @@ final class AppModel {
     var removalProgress: String?
     /// Letzter Fehler in Alltagssprache (Behalten-Liste, Papierkorb …); die Oberfläche zeigt und löscht ihn.
     var lastError: String?
+    /// Letzte Systemdaten-Messung (Tab „Systemdaten“).
+    var systemData: SystemDataReport?
+    var isMeasuringSystemData = false
+    var systemDataProgress: Double = 0
 
     /// UserDefaults-Schlüssel des Schalters „Trockenlauf“ im Menü „Entwickler“.
     static let dryRunDefaultsKey = "dryRun"
@@ -80,6 +86,9 @@ final class AppModel {
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var findingsByID: [FindingID: Finding] = [:]
     @ObservationIgnored private var scanGeneration = 0
+    @ObservationIgnored private var systemFindingsByID: [FindingID: Finding] = [:]
+    @ObservationIgnored private var hasStartedSystemMeasurement = false
+    @ObservationIgnored private var systemGeneration = 0
     /// Anzeigenamen (Fund-Titel, Item-Namen) des zuletzt ausgeführten Plans – bleiben auch nach dem Neu-Scan lesbar.
     @ObservationIgnored private var removalLabels: [FindingID: (title: String, items: [String: String])] = [:]
 
@@ -109,7 +118,7 @@ final class AppModel {
     // MARK: - Scan
 
     func scan(includeSlowChecks: Bool) async {
-        guard !isScanning, !isRemoving else { return }
+        guard !isScanning, !isRemoving, !isMeasuringSystemData else { return }
         isScanning = true
         scanProgress = 0
         scanGeneration += 1
@@ -144,13 +153,50 @@ final class AppModel {
     private func apply(_ newReport: ScanReport) {
         report = newReport
         findingsByID = Dictionary(newReport.findings.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        var next: [FindingID: Set<String>] = [:]
+        // Auswahl der Systemfunde gehört zur Messung, nicht zum Scan – bleibt erhalten.
+        var next = selection.filter { systemFindingsByID[$0.key] != nil }
         for f in newReport.findings where !kept.contains(f.id) && !Self.isHint(f) {
             guard f.isPreselected(isKept: false) else { continue }
             let ids = Self.selectableItemIDs(f)
             if !ids.isEmpty { next[f.id] = ids }
         }
         selection = next
+    }
+
+    // MARK: - Systemdaten
+
+    func measureSystemData() async {
+        guard !isMeasuringSystemData, !isScanning, !isRemoving else { return }
+        hasStartedSystemMeasurement = true
+        isMeasuringSystemData = true
+        systemDataProgress = 0
+        systemGeneration += 1
+        let generation = systemGeneration
+        refreshSystemState()
+        kept = await deps.keepList.all
+
+        let ctx = deps.makeContext(false)
+        let result = await deps.measureSystemData(ctx) { [weak self] done, total in
+            let value = total > 0 ? Double(done) / Double(total) : 1
+            Task { @MainActor [weak self] in
+                guard let self, self.isMeasuringSystemData, self.systemGeneration == generation else { return }
+                self.systemDataProgress = max(self.systemDataProgress, value)
+            }
+        }
+        // Systemfunde sind nie vorausgewählt; alte Auswahl verfällt mit der neuen Messung.
+        for id in systemFindingsByID.keys { selection[id] = nil }
+        systemData = result
+        systemFindingsByID = Dictionary(
+            result.cleanupFindings.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        systemDataProgress = 1
+        isMeasuringSystemData = false
+        refreshSystemState()
+    }
+
+    /// Misst beim ersten Öffnen des Tabs, danach nie wieder automatisch (pro App-Start).
+    func measureSystemDataIfNeeded() async {
+        guard !hasStartedSystemMeasurement else { return }
+        await measureSystemData()
     }
 
     // MARK: - Abfragen
@@ -215,7 +261,7 @@ final class AppModel {
     // MARK: - Auswahl
 
     func toggle(_ id: FindingID) {
-        guard let f = findingsByID[id], !Self.isHint(f), !kept.contains(id) else { return }
+        guard let f = lookup(id), !Self.isHint(f), !kept.contains(id) else { return }
         if isSelected(id) {
             selection[id] = nil
         } else {
@@ -226,7 +272,7 @@ final class AppModel {
 
     /// Werkzeug-Funde sind ganz oder gar nicht wählbar – ihre Befehle wirken auf alle Items.
     func toggleItem(_ id: FindingID, item: String) {
-        guard let f = findingsByID[id], !Self.isHint(f), !Self.isTool(f), !kept.contains(id),
+        guard let f = lookup(id), !Self.isHint(f), !Self.isTool(f), !kept.contains(id),
               f.items.contains(where: { $0.id == item }) else { return }
         var ids = selection[id] ?? []
         if ids.contains(item) { ids.remove(item) } else { ids.insert(item) }
@@ -266,7 +312,7 @@ final class AppModel {
     }
 
     func execute(_ plan: RemovalPlan) async {
-        guard !isRemoving, !isScanning else { return }
+        guard !isRemoving, !isScanning, !isMeasuringSystemData else { return }
         // Schutz in der Tiefe: ein anderswo gebauter Plan darf im Trockenlauf nie echt laufen.
         if dryRun, !plan.options.dryRun {
             lastError = AppErrorText.dryRunPlan
@@ -290,7 +336,14 @@ final class AppModel {
         isRemoving = false
         removalProgress = nil
         refreshSystemState()
-        await scan(includeSlowChecks: false)
+        // Pläne gelten je Tab: Systemfunde → Systemdaten neu messen, sonst normaler Scan.
+        let touchedSystem = (plan.toolSteps + plan.trashSteps + plan.deleteSteps + plan.adminSteps)
+            .contains { $0.0.category == .systemData }
+        if touchedSystem {
+            await measureSystemData()
+        } else {
+            await scan(includeSlowChecks: false)
+        }
     }
 
     func emptyTrash() async {
@@ -333,8 +386,11 @@ final class AppModel {
 
     // MARK: - Helfer
 
+    private func lookup(_ id: FindingID) -> Finding? { findingsByID[id] ?? systemFindingsByID[id] }
+
     private func allFindings(in tab: AppTab) -> [Finding] {
-        (report?.findings ?? []).filter { $0.tab == tab }
+        if tab == .systemData { return systemData?.cleanupFindings ?? [] }
+        return (report?.findings ?? []).filter { $0.tab == tab }
     }
 
     private func group(_ findings: [Finding]) -> [(KlarschiffCore.Category, [Finding])] {
@@ -414,6 +470,7 @@ extension AppDependencies {
             trash: { ctx in await trashSize(ctx) },
             fullDiskAccess: fda,
             emptyTrash: { dryRun in try await emptyTrashViaFinder(runner: commands, disk: disk, dryRun: dryRun) },
+            measureSystemData: { ctx, progress in await SystemDataScanner().scan(ctx, progress: progress) },
             dryRun: isDryRunRequested,
             terminate: { ref in
                 guard await apps.terminate(ref) else { return false }
