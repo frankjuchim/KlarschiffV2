@@ -4,7 +4,7 @@ import Foundation
 /// Spezial-Scanner (Tasks 7–12) werden in `allScanners()` ergänzt.
 public enum Catalog {
     public static func allScanners() -> [Scanner] {
-        pathRules().map { PathScanner(rule: $0) } + [SnapshotScanner(), SoftwareUpdateScanner(), SimulatorRuntimeScanner(), UnavailableSimulatorsScanner()]
+        pathRules().map { PathScanner(rule: $0) } + [SnapshotScanner(), SoftwareUpdateScanner(), SimulatorRuntimeScanner(), UnavailableSimulatorsScanner(), HomebrewCleanupScanner(), HomebrewCaskScanner()]
     }
 
     /// Regel zu einer ID (für Tests und Neu-Scans einzelner Regeln). Unbekannte ID ist ein Programmierfehler.
