@@ -1,0 +1,2 @@
+// Kopieren nach Config/Local.xcconfig und anpassen. Nicht einchecken.
+DEVELOPMENT_TEAM = XXXXXXXXXX
