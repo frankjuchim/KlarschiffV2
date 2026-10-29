@@ -380,6 +380,7 @@ extension AppDependencies {
     static func live() -> AppDependencies {
         let home = URL(filePath: NSHomeDirectory())
         let cacheDir = SafetyGuard.userCacheDirectory() ?? SafetyGuard.missingUserCacheDirectory
+        let tempDir = SafetyGuard.userTempDirectory() ?? URL(filePath: "/var/empty/klarschiff-no-temp-dir")
         let commands = ProcessCommandRunner()
         let tools = ToolLocator.standard
         let apps = WorkspaceRunningApps()
@@ -405,7 +406,8 @@ extension AppDependencies {
                 ScanContext(
                     home: home, userCacheDir: cacheDir, rootPrefix: URL(filePath: "/"), runner: commands,
                     tools: tools, sizer: SizeMeter(), runningApps: apps, claims: PathClaims(), now: Date(),
-                    hasFullDiskAccess: fda(), includeSlowChecks: slow)
+                    hasFullDiskAccess: fda(), includeSlowChecks: slow,
+                    userTempDir: tempDir)
             },
             bigChunks: { ctx, findings in await bigChunks.scan(ctx, findings: findings) },
             photos: { ctx in await photosInfo(ctx) },

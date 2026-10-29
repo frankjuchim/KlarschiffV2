@@ -3,6 +3,8 @@ import Foundation
 public struct ScanContext: Sendable {
     public var home: URL
     public var userCacheDir: URL
+    /// Eigener `DARWIN_USER_TEMP_DIR` (`…/T`); ohne Angabe ein nicht existierender Ersatzpfad (keine Funde).
+    public var userTempDir: URL
     /// "/" in Produktion, Fixture-Wurzel in Tests – für absolute Pfade wie /usr/local.
     public var rootPrefix: URL
     public var runner: CommandRunner
@@ -18,10 +20,11 @@ public struct ScanContext: Sendable {
     public init(
         home: URL, userCacheDir: URL, rootPrefix: URL, runner: CommandRunner, tools: ToolLocator,
         sizer: SizeMeter, runningApps: RunningApps, claims: PathClaims, now: Date, hasFullDiskAccess: Bool,
-        includeSlowChecks: Bool = false
+        includeSlowChecks: Bool = false, userTempDir: URL = URL(filePath: "/var/empty/klarschiff-no-temp-dir")
     ) {
         self.home = home
         self.userCacheDir = userCacheDir
+        self.userTempDir = userTempDir
         self.rootPrefix = rootPrefix
         self.runner = runner
         self.tools = tools

@@ -9,7 +9,7 @@ public struct SystemDataScanner: Sendable {
     private let sizeOf: SizeOf?
     private let cleanupScanners: [any Scanner]
 
-    public init(areaTimeout: Duration = .seconds(120), sizeOf: SizeOf? = nil, cleanupScanners: [any Scanner] = []) {
+    public init(areaTimeout: Duration = .seconds(120), sizeOf: SizeOf? = nil, cleanupScanners: [any Scanner] = SystemCleanup.scanners()) {
         self.areaTimeout = areaTimeout
         self.sizeOf = sizeOf
         self.cleanupScanners = cleanupScanners

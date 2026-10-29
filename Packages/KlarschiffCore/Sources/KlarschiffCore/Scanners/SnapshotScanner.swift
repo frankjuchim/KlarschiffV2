@@ -1,6 +1,6 @@
 import Foundation
 
-private let softwareUpdateURL = URL(string: "x-apple.systempreferences:com.apple.Software-Update-Settings.extension")!
+let softwareUpdateURL = URL(string: "x-apple.systempreferences:com.apple.Software-Update-Settings.extension")!
 
 private func adminPreview(_ step: AdminStep) -> String {
     (["sudo", step.executable] + step.arguments).map(ShellQuote.quote).joined(separator: " ")

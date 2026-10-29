@@ -23,7 +23,8 @@ extension ScanContext {
             claims: PathClaims(),
             now: now,
             hasFullDiskAccess: hasFullDiskAccess,
-            includeSlowChecks: includeSlowChecks
+            includeSlowChecks: includeSlowChecks,
+            userTempDir: root.appending(path: "T", directoryHint: .isDirectory)
         )
     }
 }
