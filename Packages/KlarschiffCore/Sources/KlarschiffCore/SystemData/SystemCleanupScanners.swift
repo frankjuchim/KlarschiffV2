@@ -28,8 +28,13 @@ public enum SystemCleanup {
         !name.isEmpty && name != "." && name != ".." && !name.contains("/") && !name.unicodeScalars.contains("\0")
     }
 
+    /// Summe der Größen; `nil`, sobald ein Eintrag keine Größe hat (nie stillschweigend 0).
+    static func total(_ items: [FindingItem]) -> Int64? {
+        items.contains { $0.size == nil } ? nil : items.reduce(0) { $0 + ($1.size ?? 0) }
+    }
+
     static func measure(_ url: URL, _ ctx: ScanContext) async throws -> (size: Int64, complete: Bool) {
-        do { return try await ctx.sizer.measure(url) } catch is CancellationError { throw CancellationError() } catch { return (0, false) }
+        do { return try await ctx.sizer.measure(url) } catch is CancellationError { throw CancellationError() } catch { return (0, false) }  // Fehler ≠ ENOENT: Untergrenze, nie exakt 0
     }
 }
 
@@ -56,7 +61,8 @@ struct TempScanner: Scanner {
             default: continue   // Symlinks, Sockets, Pipes: nie anbieten
             }
             let size = try? await ctx.sizer.size(of: url)
-            items.append(FindingItem(id: url.path, url: url, name: name, size: size, date: date))
+            items.append(FindingItem(id: url.path, url: url, name: name, size: size, date: date,
+                                     detail: size == nil ? "mindestens (Größe nicht messbar)" : nil))
         }
         guard !items.isEmpty else { return [] }
         return [Finding(
@@ -64,7 +70,7 @@ struct TempScanner: Scanner {
             title: "Alte temporäre Dateien",
             summary: SystemCleanup.summary(warning: Self.warning,
                 explanation: "Klarschiff 2 entfernt nur Einträge in deinem eigenen temporären Ordner, die seit mehr als 3 Tagen unverändert sind."),
-            risk: .review, method: .delete, items: items, size: items.reduce(0) { $0 + ($1.size ?? 0) },
+            risk: .review, method: .delete, items: items, size: SystemCleanup.total(items),
             blockingApps: [], keepSuggested: false,
             commandPreview: items.compactMap(\.url).map { "rm -rf " + ShellQuote.quote($0.path) },
             needsFullDiskAccess: false)]
@@ -73,15 +79,17 @@ struct TempScanner: Scanner {
     /// `true`, wenn nichts unter `root` (auch Symlinks, lstat) jünger als `cutoff` ist. Unlesbar → `false`.
     static func allOlder(_ root: URL, than cutoff: Date) throws -> Bool {
         let fm = FileManager.default
-        guard let en = fm.enumerator(atPath: root.path) else { return false }
+        var failed = false
+        guard let en = fm.enumerator(at: root, includingPropertiesForKeys: [.contentModificationDateKey],
+                                     options: [], errorHandler: { _, _ in failed = true; return false }) else { return false }
         var count = 0
-        while en.nextObject() != nil {
+        for case let url as URL in en {
             count += 1
             if count % 500 == 0 { try Task.checkCancellation() }
-            guard let attrs = en.fileAttributes, let date = attrs[.modificationDate] as? Date else { return false }
+            guard let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate else { return false }
             if date >= cutoff { return false }
         }
-        return true
+        return !failed
     }
 }
 
@@ -96,13 +104,16 @@ struct LibraryCachesScanner: Scanner {
         "com.apple.iconservices.store", "com.apple.aned", "com.apple.amsengagementd.classicdatavault",
     ]
 
+    /// Namen, die SafetyGuard/AdminRemover ohnehin verweigern würden (Homebrew) – gar nicht erst anbieten.
+    static let denied: Set<String> = ["caskroom", "cellar"]
+
     func scan(_ ctx: ScanContext) async throws -> [Finding] {
         let base = ctx.absolute(Self.root)
         guard SystemCleanup.type(base.path) == .typeDirectory,
               let names = try? FileManager.default.contentsOfDirectory(atPath: base.path) else { return [] }
         var items: [FindingItem] = []
         var steps: [AdminStep] = []
-        for name in names.sorted() where SystemCleanup.isSafeName(name) && !Self.excluded.contains(name.lowercased()) {
+        for name in names.sorted() where SystemCleanup.isSafeName(name) && !Self.excluded.contains(name.lowercased()) && !Self.denied.contains(name.lowercased()) {
             try Task.checkCancellation()
             let url = base.appending(path: name)
             guard let type = SystemCleanup.type(url.path), type == .typeDirectory || type == .typeRegular else { continue }
@@ -133,21 +144,35 @@ struct LibraryLogsScanner: Scanner {
     static let root = "/Library/Logs"
     static let warning = "Alte Protokolle helfen bei der Fehlersuche. Danach sind sie weg."
 
-    /// Systemkonto = uid/gid < 500 (in Tests ersetzbar, weil Fixture-Ordner dem Testbenutzer gehören).
-    let isSystemAccount: @Sendable (UInt) -> Bool
+    static let maxItems = 500
+    /// Einzige Gruppen, deren Schreibrecht als vertrauenswürdig gilt: wheel, admin, _analyticsusers.
+    static let trustedWriteGroups: Set<UInt> = [0, 80, 250]
 
-    init(isSystemAccount: @escaping @Sendable (UInt) -> Bool = { $0 < 500 }) {
-        self.isSystemAccount = isSystemAccount
+    /// Besitzer-Vertrauen (uid < 500), getrennt von den Gruppen; in Tests ersetzbar (Fixture gehört dem Testbenutzer).
+    let isTrustedOwner: @Sendable (UInt) -> Bool
+    let writableGroups: Set<UInt>
+
+    init(isTrustedOwner: @escaping @Sendable (UInt) -> Bool = { $0 < 500 },
+         writableGroups: Set<UInt> = LibraryLogsScanner.trustedWriteGroups) {
+        self.isTrustedOwner = isTrustedOwner
+        self.writableGroups = writableGroups
     }
 
-    /// Ordner gehört einem Systemkonto und ist nie für „alle“, für die Gruppe nur bei einer Systemgruppe beschreibbar.
+    /// Besitzer vertrauenswürdig, nie für „alle“ beschreibbar, für die Gruppe nur bei wheel/admin/_analyticsusers.
+    static func isTrustedDirectory(uid: UInt, gid: UInt, mode: UInt16,
+                                   isTrustedOwner: (UInt) -> Bool = { $0 < 500 },
+                                   writableGroups: Set<UInt> = trustedWriteGroups) -> Bool {
+        isTrustedOwner(uid)
+            && mode & UInt16(S_IWOTH) == 0
+            && (mode & UInt16(S_IWGRP) == 0 || writableGroups.contains(gid))
+    }
+
     private func isTrustedDirectory(_ attrs: [FileAttributeKey: Any]) -> Bool {
         guard let uid = (attrs[.ownerAccountID] as? NSNumber)?.uintValue,
               let gid = (attrs[.groupOwnerAccountID] as? NSNumber)?.uintValue,
               let mode = (attrs[.posixPermissions] as? NSNumber)?.uint16Value else { return false }
-        return isSystemAccount(uid)
-            && mode & UInt16(S_IWOTH) == 0
-            && (mode & UInt16(S_IWGRP) == 0 || isSystemAccount(gid))
+        return Self.isTrustedDirectory(uid: uid, gid: gid, mode: mode,
+                                       isTrustedOwner: isTrustedOwner, writableGroups: writableGroups)
     }
 
     func scan(_ ctx: ScanContext) async throws -> [Finding] {
@@ -157,23 +182,36 @@ struct LibraryLogsScanner: Scanner {
         var found: [(url: URL, real: String, date: Date)] = []
         try walk(url: base, real: Self.root, cutoff: cutoff, into: &found)
         guard !found.isEmpty else { return [] }
-        found.sort { $0.real < $1.real }
+        var sized: [(file: (url: URL, real: String, date: Date), size: Int64?)] = []
+        for f in found {
+            try Task.checkCancellation()
+            sized.append((f, try? await ctx.sizer.size(of: f.url)))
+        }
+        let omitted = max(0, sized.count - Self.maxItems)
+        if omitted > 0 {
+            // Die größten zuerst behalten (unbekannte Größe zuletzt), Auswahl stabil nach Pfad.
+            sized.sort { ($0.size ?? -1, $1.file.real) > ($1.size ?? -1, $0.file.real) }
+            sized = Array(sized.prefix(Self.maxItems))
+        }
+        sized.sort { $0.file.real < $1.file.real }
 
         var items: [FindingItem] = []
         var steps: [AdminStep] = []
-        for f in found {
-            try Task.checkCancellation()
-            let size = try? await ctx.sizer.size(of: f.url)
-            items.append(FindingItem(id: f.url.path, url: f.url, name: f.url.lastPathComponent, size: size, date: f.date))
+        for (f, size) in sized {
+            items.append(FindingItem(id: f.url.path, url: f.url, name: f.url.lastPathComponent, size: size, date: f.date,
+                                     detail: size == nil ? "mindestens (Größe nicht messbar)" : nil))
             steps.append(AdminStep(executable: "/bin/rm", arguments: ["-f", f.real]))
         }
+        let capNote = omitted > 0
+            ? " Es werden die \(Self.maxItems) größten angeboten – \(omitted) weitere beim nächsten Durchgang."
+            : ""
         return [Finding(
             id: FindingID(scannerID: id, key: "all"), category: .systemData,
             title: "Alte System-Protokolle",
             summary: SystemCleanup.summary(warning: Self.warning,
-                explanation: "Entfernt Protokolldateien in /Library/Logs, die seit mehr als 30 Tagen unverändert sind. Zum Entfernen fragt macOS einmal nach deinem Passwort."),
+                explanation: "Entfernt Protokolldateien in /Library/Logs, die seit mehr als 30 Tagen unverändert sind. Zum Entfernen fragt macOS einmal nach deinem Passwort.\(capNote)"),
             risk: .review, method: .admin(steps), items: items,
-            size: items.reduce(0) { $0 + ($1.size ?? 0) },
+            size: SystemCleanup.total(items),
             blockingApps: [], keepSuggested: false,
             commandPreview: TeXLiveScanner.adminPreview(steps), needsFullDiskAccess: false)]
     }
@@ -241,19 +279,23 @@ struct MacUpdateHintScanner: Scanner {
         let base = ctx.absolute(Self.assets)
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: base.path) else { return [] }
         var total: Int64 = 0
+        var unknown = false
         var items: [FindingItem] = []
         for name in names.sorted() where name.hasPrefix(Self.prefix) && SystemCleanup.type(base.appending(path: name).path) == .typeDirectory {
             let url = base.appending(path: name)
             let m = try await SystemCleanup.measure(url, ctx)
             total += m.size
-            items.append(FindingItem(id: url.path, url: url, name: name, size: m.size))
+            if !m.complete { unknown = true }
+            items.append(FindingItem(id: url.path, url: url, name: name, size: m.complete ? m.size : nil,
+                                     detail: m.complete ? nil : "mindestens (Größe nicht vollständig messbar)"))
         }
-        guard total > 0 else { return [] }
+        // Ein nicht messbarer Hinweis bleibt sichtbar (Größe unbekannt); nur ein sicher leerer fällt weg.
+        guard unknown || total > 0 else { return [] }
         return [Finding(
             id: FindingID(scannerID: id, key: "all"), category: .systemData,
             title: "Heruntergeladenes macOS-Update",
             summary: "Installiere das Update oder warte – macOS räumt die Datei selbst weg. Klarschiff 2 entfernt sie nicht, weil sie zum Update gehört.",
-            risk: .hintOnly, method: .hint(.openURL(softwareUpdateURL)), items: items, size: total,
+            risk: .hintOnly, method: .hint(.openURL(softwareUpdateURL)), items: items, size: unknown ? nil : total,
             blockingApps: [], keepSuggested: false, commandPreview: [], needsFullDiskAccess: false)]
     }
 }
