@@ -48,6 +48,14 @@ KLARSCHIFF_LIVE_SCAN=1 KLARSCHIFF_LIVE_SCAN_OUT=/tmp/systemdata.md \
   swift test --package-path Packages/KlarschiffCore --filter liveSystemData
 ```
 
+## Automatischer Check
+
+Optional prüft Klarschiff 2 im Hintergrund (täglich oder wöchentlich, einstellbar unter ⌘,) per LaunchAgent, was sich
+aufräumen ließe, speichert das im Verlauf und meldet Auffälligkeiten per Mitteilung. Der Check **löscht nie etwas** und
+fragt im Hintergrund nie nach Rechten; aufgeräumt wird nur in der App, wenn du es auswählst. Von Hand:
+`"Klarschiff 2.app/Contents/MacOS/Klarschiff 2" --check`. Eine Migrationskarte erkennt die alte Aufräum-Automatik
+(zwei Agents, `cleanup.sh` samt Protokollen) und entfernt sie erst nach deiner Bestätigung.
+
 ## Trockenlauf
 
 Im Trockenlauf läuft alles wie gewohnt, es wird aber nichts entfernt. Er ist aktiv, wenn die App mit dem

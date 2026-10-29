@@ -95,6 +95,28 @@ struct LiveScanTests {
         }
     }
 
+    @Test(.enabled(if: liveEnabled), .timeLimit(.minutes(2)))
+    func liveLegacyDetectWritesSummary() async throws {
+        let env = ProcessInfo.processInfo.environment
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let cache = try #require(SafetyGuard.userCacheDirectory())
+        let ctx = ScanContext(
+            home: home, userCacheDir: cache, rootPrefix: URL(filePath: "/"), runner: ProcessCommandRunner(),
+            tools: .standard, sizer: SizeMeter(), runningApps: WorkspaceRunningApps(), claims: PathClaims(),
+            now: Date(), hasFullDiskAccess: FullDiskAccess.isGranted(home: home), includeSlowChecks: false)
+        let items = await LegacyAutomation.detect(ctx)
+        var md = "# Live-Erkennung der alten Automatik (nur lesend)\n\n"
+        md += "Erkannt: \(items.count)\n\n| Titel | Ordner | geladen |\n|---|---|---|\n"
+        for i in items {
+            md += "| \(i.title) | \(i.url.deletingLastPathComponent().path) | \(i.isLoaded ? "ja" : "nein") |\n"
+        }
+        if let out = env["KLARSCHIFF_LIVE_SCAN_OUT"] {
+            try md.write(toFile: out, atomically: true, encoding: .utf8)
+        } else {
+            print(md)
+        }
+    }
+
     private static func kind(_ m: RemovalMethod) -> String {
         switch m {
         case .trash: "trash"

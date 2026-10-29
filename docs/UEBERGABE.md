@@ -39,6 +39,19 @@
 - [ ] Tab Systemdaten in `--dry-run` ansehen.
 - [ ] Einen Admin-Aufräumfund echt ausführen → genau eine Passwortabfrage; „Ich habe verstanden“ muss den Button freischalten.
 
+## Stand Teilprojekt 3 – Automatischer Check & Migration (29.10.2026)
+- Hintergrund-Check per LaunchAgent (`SMAppService.agent`, Aufruf `--check`), Verlauf in `~/Library/Application Support/Klarschiff2/history.json`, Mitteilung bei Auffälligkeiten, Einstellungen (⌘,) mit Statuszeile, Migrationskarte zum Entfernen der alten Aufräum-Automatik (`LegacyAutomation`). Der Check **löscht nie** und fragt nie im Hintergrund.
+- Lese-Prüfung auf Franks Mac: beide alten Agents (`com.frankjuchim.cleanup`, `de.bodendiek.klarschiff.check`, beide geladen) sowie `cleanup.sh`, `cleanup.log`, `cleanup_error.log` erkannt. `--check` lief mit Exit 0 in ≈ 29 s (aufräumbar 45,79 GB, frei 219,80 GB). Details: Abnahme-Abschnitt „Teilprojekt 3“. Opt-in-Livetest `liveLegacyDetectWritesSummary` (`KLARSCHIFF_LIVE_SCAN=1`).
+
+### Offen für Frank (TP3)
+- [ ] Signierte App: Check auf „Wöchentlich“, unter Anmeldeobjekte erlauben, Mitteilungen zulassen.
+- [ ] „Jetzt prüfen“ ausführen; Einstellungen in `--dry-run` ansehen.
+- [ ] „Alte Automatik entfernen“ echt ausführen und mit `launchctl list | grep -E "frankjuchim|klarschiff"` prüfen.
+
+### Bekannte Abweichungen Teilprojekt 3
+- Der LaunchAgent des Checks lässt sich ohne Signatur/Team nicht registrieren; die Registrierung und die Hintergrundausführung sind daher nur mit der signierten App prüfbar (hier nur `--check` direkt aufgerufen).
+- Die leere alte `Klarschiff.app` wurde auf Franks Mac nicht gefunden (Erkennung nur für wirklich leere Bundles).
+
 ## Startnachricht für die Sitzung auf dem Mac
 > Lies CLAUDE.md und docs/UEBERGABE.md. Setze den Plan docs/superpowers/plans/2026-10-29-klarschiff2-teilprojekt1.md mit superpowers:subagent-driven-development um, beginnend bei Task 1. Branch: claude/intelligent-galileo-8ok14a. Nach jedem Task committen und pushen.
 
