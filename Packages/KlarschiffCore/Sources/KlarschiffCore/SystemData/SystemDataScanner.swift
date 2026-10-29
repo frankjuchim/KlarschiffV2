@@ -58,7 +58,9 @@ public struct SystemDataScanner: Sendable {
                 // Home je direktem Unterordner (auch versteckte, keine Symlinks), höchstens 8 gleichzeitig.
                 let children = Measurer.homeChildren(ctx.home)
                 if children.unreadable { lower = true }
-                let top = await measure.measureAll(children.urls, idPrefix: "userdata.home")
+                let top = await measure.measureAll(children.urls.map { ($0, "userdata.home.\($0.lastPathComponent)") })
+                // Zeitüberschreitung: eine Ebene tiefer – Unterordner einzeln, direkte Dateien per Ressourcenwerte.
+                var grandchildren: [(URL, String)] = []
                 for r in top {
                     if let size = r.size {
                         sum += size
@@ -66,18 +68,22 @@ public struct SystemDataScanner: Sendable {
                         f += r.failures
                         continue
                     }
-                    // Zeitüberschreitung: eine Ebene tiefer, Verzeichnisse je Kind einzeln messen.
                     var isDir: ObjCBool = false
-                    guard FileManager.default.fileExists(atPath: r.url.path, isDirectory: &isDir), isDir.boolValue else {
+                    guard FileManager.default.fileExists(atPath: r.url.path, isDirectory: &isDir), isDir.boolValue,
+                          let entries = Measurer.splitEntries(r.url) else {
                         lower = true; f += r.failures; continue
                     }
-                    let sub = Measurer.homeChildren(r.url)
-                    if sub.unreadable || sub.urls.isEmpty { lower = true; f += r.failures; continue }
-                    for g in await measure.measureAll(sub.urls, idPrefix: "userdata.home.\(r.url.lastPathComponent)") {
-                        if let size = g.size { sum += size }
-                        if g.size == nil || !g.complete { lower = true }
-                        f += g.failures
-                    }
+                    sum += entries.filesSize
+                    if entries.filesIncomplete { lower = true }
+                    let name = r.url.lastPathComponent
+                    grandchildren += entries.dirs.map { ($0, "userdata.home.\(name).\($0.lastPathComponent)") }
+                    f.append(ScanFailure(scannerID: "systemdata.userdata.home.\(name)",
+                        message: "„~/\(name)“ wurde in Unterordnern gemessen (Gesamtmessung lief in die Frist)."))
+                }
+                for g in await measure.measureAll(grandchildren) {
+                    if let size = g.size { sum += size }
+                    if g.size == nil || !g.complete { lower = true }
+                    f += g.failures
                 }
                 return .userData(sum, lower, f)
             }
@@ -217,27 +223,46 @@ private struct Measurer: Sendable {
         return (urls, false)
     }
 
-    /// Misst `urls` parallel (höchstens 8 gleichzeitig), je mit eigener Frist; Reihenfolge wie `urls`.
-    func measureAll(_ urls: [URL], idPrefix: String) async -> [(url: URL, size: Int64?, complete: Bool, failures: [ScanFailure])] {
-        var results = [(url: URL, size: Int64?, complete: Bool, failures: [ScanFailure])?](repeating: nil, count: urls.count)
+    /// Misst die Einträge parallel (höchstens 8 gleichzeitig), je mit eigener Frist; Reihenfolge wie `items`.
+    func measureAll(_ items: [(url: URL, id: String)]) async -> [(url: URL, size: Int64?, complete: Bool, failures: [ScanFailure])] {
+        var results = [(url: URL, size: Int64?, complete: Bool, failures: [ScanFailure])?](repeating: nil, count: items.count)
         await withTaskGroup(of: (Int, Int64?, Bool, [ScanFailure]).self) { group in
             var next = 0
             func add() {
-                guard next < urls.count else { return }
+                guard next < items.count else { return }
                 let i = next
                 next += 1
                 group.addTask {
-                    let r = await self.single(urls[i], id: "\(idPrefix).\(urls[i].lastPathComponent)")
+                    let r = await self.single(items[i].url, id: items[i].id)
                     return (i, r.size, r.complete, r.failures)
                 }
             }
-            for _ in 0..<min(8, urls.count) { add() }
+            for _ in 0..<min(8, items.count) { add() }
             for await (i, size, complete, f) in group {
-                results[i] = (urls[i], size, complete, f)
+                results[i] = (items[i].url, size, complete, f)
                 add()
             }
         }
         return results.compactMap { $0 }
+    }
+
+    /// Teilt ein Verzeichnis in Unterordner und direkte Nicht-Verzeichnis-Einträge (ohne Symlinks, lstat-Semantik).
+    /// nil, wenn das Verzeichnis nicht lesbar ist.
+    static func splitEntries(_ dir: URL) -> (dirs: [URL], filesSize: Int64, filesIncomplete: Bool)? {
+        let fm = FileManager.default
+        guard let names = try? fm.contentsOfDirectory(atPath: dir.path) else { return nil }
+        var dirs: [URL] = []
+        var size: Int64 = 0
+        var incomplete = false
+        let keys: Set<URLResourceKey> = [.isSymbolicLinkKey, .isDirectoryKey, .totalFileAllocatedSizeKey, .fileAllocatedSizeKey]
+        for n in names.sorted() {
+            let u = dir.appending(path: n)
+            guard let v = try? u.resourceValues(forKeys: keys) else { incomplete = true; continue }
+            if v.isSymbolicLink == true { continue }
+            if v.isDirectory == true { dirs.append(u); continue }
+            if let b = v.totalFileAllocatedSize ?? v.fileAllocatedSize { size += Int64(b) } else { incomplete = true }
+        }
+        return (dirs, size, incomplete)
     }
 
     func single(_ url: URL, id: String) async -> (size: Int64?, complete: Bool, failures: [ScanFailure]) {

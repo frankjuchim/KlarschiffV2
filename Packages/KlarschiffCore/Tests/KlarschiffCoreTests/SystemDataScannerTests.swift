@@ -193,13 +193,13 @@ private func find(_ id: String, in areas: [SystemArea]) -> SystemArea? {
 
     @Test func homeMeasuredPerChildWithOneHanging() async throws {
         let tree = try FixtureTree()
-        for n in ["a", "b", ".hidden", "slow"] { _ = try tree.dir("home/\(n)") }
+        for n in ["a", "b", ".hidden", "slow/x"] { _ = try tree.dir("home/\(n)") }
         let scanner = SystemDataScanner(areaTimeout: .milliseconds(300), sizeOf: sizer(tree.root, [
-            "/home/a": 2 * GB, "/home/.hidden": 1 * GB, "/home/b": GB / 2, "/Applications": 3 * GB], hang: ["/home/slow"]))
+            "/home/a": 2 * GB, "/home/.hidden": 1 * GB, "/home/b": GB / 2, "/Applications": 3 * GB], hang: ["/home/slow", "/home/slow/x"]))
         let r = await scanner.scan(.test(root: tree.root, runner: diskutilOK())) { _, _ in }
         #expect(r.userData == 2 * GB + 1 * GB + GB / 2 + 3 * GB)
         #expect(r.userDataIsLowerBound && r.unaccountedIsUpperBound)
-        #expect(r.failures.contains { $0.scannerID == "systemdata.userdata.home.slow" })
+        #expect(r.failures.contains { $0.scannerID == "systemdata.userdata.home.slow.x" })
     }
 
     @Test func homeChildTimeoutFallsBackToGrandchildren() async throws {
@@ -218,6 +218,38 @@ private func find(_ id: String, in areas: [SystemArea]) -> SystemArea? {
         // Ein Enkel unvollständig
         r = await SystemDataScanner(areaTimeout: .milliseconds(300), sizeOf: sizer(tree.root, sizes, incomplete: ["/home/Library/A"], hang: ["/home/Library"]))
             .scan(.test(root: tree.root, runner: diskutilOK())) { _, _ in }
+        #expect(r.userDataIsLowerBound)
+    }
+
+    @Test func fallbackCountsDirectFiles() async throws {
+        let tree = try FixtureTree()
+        _ = try tree.dir("home/Library/A")
+        _ = try tree.file("home/Library/loose.bin", bytes: 100_000)
+        let scanner = SystemDataScanner(areaTimeout: .milliseconds(300), sizeOf: sizer(tree.root, ["/home/Library/A": GB], hang: ["/home/Library"]))
+        let r = await scanner.scan(.test(root: tree.root, runner: diskutilOK())) { _, _ in }
+        #expect(r.userData >= GB + 100_000)
+        #expect(r.userData < GB + 1_000_000)
+        #expect(!r.userDataIsLowerBound)
+        #expect(r.failures.contains { $0.message.contains("in Unterordnern gemessen") })
+    }
+
+    @Test func fallbackListingFailureSetsLowerBound() async throws {
+        let tree = try FixtureTree()
+        let lib = try tree.dir("home/Library")
+        _ = try tree.dir("home/Library/A")
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: lib.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: lib.path) }
+        let scanner = SystemDataScanner(areaTimeout: .milliseconds(300), sizeOf: sizer(tree.root, [:], hang: ["/home/Library"]))
+        let r = await scanner.scan(.test(root: tree.root, runner: diskutilOK())) { _, _ in }
+        #expect(r.userDataIsLowerBound)
+    }
+
+    @Test func unreadableHomeSetsLowerBound() async throws {
+        let tree = try FixtureTree()
+        let home = try tree.dir("home")
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: home.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: home.path) }
+        let r = await SystemDataScanner(sizeOf: sizer(tree.root, [:])).scan(.test(root: tree.root, runner: diskutilOK())) { _, _ in }
         #expect(r.userDataIsLowerBound)
     }
 
