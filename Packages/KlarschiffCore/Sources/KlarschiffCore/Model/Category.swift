@@ -74,3 +74,24 @@ public enum Category: String, CaseIterable, Sendable {
         Category.allCases.firstIndex(of: self)!
     }
 }
+
+extension Category {
+    /// Kategorie zum Scanner-ID-Präfix (vor dem ersten Punkt); unbekannt → nil.
+    public static func forScannerID(_ id: String) -> Category? {
+        let prefix = id.split(separator: ".", maxSplits: 1).first.map(String.init) ?? id
+        switch prefix {
+        case "system": return .system
+        case "ai": return .aiLeftovers
+        case "appCaches": return .appCaches
+        case "personal": return .personalData
+        case "apps": return .apps
+        case "xcode": return .xcode
+        case "sim", "simulators": return .simulators
+        case "brew": return .homebrew
+        case "languages": return .languages
+        case "toolchains": return .toolchains
+        case "sysdata", "systemdata": return .systemData
+        default: return nil
+        }
+    }
+}

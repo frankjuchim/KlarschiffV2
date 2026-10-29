@@ -8,8 +8,12 @@ public struct SystemDataScanner: Sendable {
     private let areaTimeout: Duration
     private let sizeOf: SizeOf?
     private let cleanupScanners: [any Scanner]
+    private let measureUserData: Bool
 
-    public init(areaTimeout: Duration = .seconds(120), sizeOf: SizeOf? = nil, cleanupScanners: [any Scanner] = SystemCleanup.scanners()) {
+    /// `measureUserData: false` überspringt „Deine Daten“ (Programme und Home): userData = 0, kein Hinweis (schneller Check).
+    public init(areaTimeout: Duration = .seconds(120), sizeOf: SizeOf? = nil, cleanupScanners: [any Scanner] = SystemCleanup.scanners(),
+                measureUserData: Bool = true) {
+        self.measureUserData = measureUserData
         self.areaTimeout = areaTimeout
         self.sizeOf = sizeOf
         self.cleanupScanners = cleanupScanners
@@ -39,6 +43,7 @@ public struct SystemDataScanner: Sendable {
         var failures: [ScanFailure] = []
         let cleanupScanners = self.cleanupScanners
         let timeout = areaTimeout
+        let measureUserData = self.measureUserData
 
         await withTaskGroup(of: Unit.self) { group in
             for (i, def) in definitions.enumerated() {
@@ -48,6 +53,7 @@ public struct SystemDataScanner: Sendable {
                 }
             }
             group.addTask {
+                guard measureUserData else { return .userData(0, false, []) }
                 var f: [ScanFailure] = []
                 var sum: Int64 = 0
                 var lower = false
