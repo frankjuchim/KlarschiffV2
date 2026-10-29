@@ -13,5 +13,5 @@ jobs:
         run: swift test --package-path Packages/KlarschiffCore
       - name: Generate project
         run: xcodegen generate
-      - name: Build app
-        run: xcodebuild -scheme Klarschiff -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build
+      - name: Build and test app
+        run: xcodebuild -scheme Klarschiff -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test
