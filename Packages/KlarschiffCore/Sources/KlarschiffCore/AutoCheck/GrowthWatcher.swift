@@ -15,7 +15,8 @@ public enum GrowthWatcher {
     }
 
     /// Verglichen werden nur IDs, die in beiden Snapshots eine Größe haben und in keinem als Untergrenze/unbekannt gelten.
-    /// Reihenfolge: growth (absteigend nach Zuwachs), lowSpace, cleanable.
+    /// Verwaiste Hintergrunddienste: nur Labels, die im vorigen Snapshot fehlten (ohne vorigen Snapshot kein Alarm).
+    /// Reihenfolge: growth (absteigend nach Zuwachs), orphanedServices, lowSpace, cleanable.
     public static func alerts(previous: CheckSnapshot?, current: CheckSnapshot) -> [CheckAlert] {
         var result: [CheckAlert] = []
 
@@ -34,6 +35,9 @@ public enum GrowthWatcher {
             for g in sorted {
                 result.append(.growth(id: g.id, title: current.titles[g.id] ?? g.id, from: g.from, to: g.to))
             }
+            let known = Set(previous.orphanedServiceLabels)
+            let new = Set(current.orphanedServiceLabels).subtracting(known).sorted()
+            if !new.isEmpty { result.append(.orphanedServices(labels: new)) }
         }
 
         if current.totalBytes > 0,

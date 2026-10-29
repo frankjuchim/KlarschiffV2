@@ -103,4 +103,54 @@ import Foundation
         if case .lowSpace = a[2] {} else { Issue.record("2") }
         if case .cleanable = a[3] {} else { Issue.record("3") }
     }
+
+    // MARK: Verwaiste Hintergrunddienste
+
+    func snap(orphans: [String], free: Int64 = 100 * Self.gb, total: Int64 = 500 * Self.gb) -> CheckSnapshot {
+        var s = snap(free: free, total: total)
+        s.orphanedServiceLabels = orphans
+        return s
+    }
+
+    @Test func orphanedServicesOnlyNewLabels() {
+        let p = snap(orphans: ["a.b.old"])
+        let a = GrowthWatcher.alerts(previous: p, current: snap(orphans: ["z.new", "a.b.old", "c.new"]))
+        #expect(a == [.orphanedServices(labels: ["c.new", "z.new"])])
+        // Nichts Neues (auch: weniger) → kein Alarm.
+        #expect(GrowthWatcher.alerts(previous: p, current: snap(orphans: ["a.b.old"])).isEmpty)
+        #expect(GrowthWatcher.alerts(previous: p, current: snap(orphans: [])).isEmpty)
+    }
+
+    @Test func orphanedServicesNoAlertOnFirstCheck() {
+        #expect(GrowthWatcher.alerts(previous: nil, current: snap(orphans: ["x.y.z"])).isEmpty)
+    }
+
+    @Test func orderGrowthThenOrphansThenLowSpaceThenCleanable() {
+        let g = Self.gb
+        var p = snap(sizes: ["a": 10 * g])
+        p.orphanedServiceLabels = []
+        var c = snap(sizes: ["a": 30 * g], cleanable: 5 * g, free: 5 * g, total: 100 * g)
+        c.orphanedServiceLabels = ["x.y.z"]
+        let a = GrowthWatcher.alerts(previous: p, current: c)
+        #expect(a.count == 4)
+        if case .growth = a[0] {} else { Issue.record("0") }
+        #expect(a[1] == .orphanedServices(labels: ["x.y.z"]))
+        if case .lowSpace = a[2] {} else { Issue.record("2") }
+        if case .cleanable = a[3] {} else { Issue.record("3") }
+    }
+
+    @Test func oldHistoryWithoutOrphanedLabelsDecodes() throws {
+        let json = #"[{"date":0,"cleanableTotal":1,"freeBytes":2,"totalBytes":3,"sizes":{},"titles":{},"alerts":[{"cleanable":{"total":5}}]}]"#
+        let decoded = try JSONDecoder().decode([CheckSnapshot].self, from: Data(json.utf8))
+        #expect(decoded.first?.orphanedServiceLabels == [])
+        #expect(decoded.first?.alerts == [.cleanable(total: 5)])
+    }
+
+    @Test func orphanedLabelsRoundTrip() throws {
+        var s = snap(orphans: ["x.y.z"])
+        s.alerts = [.orphanedServices(labels: ["x.y.z"])]
+        s.date = Date(timeIntervalSince1970: 1_000)
+        let back = try JSONDecoder().decode(CheckSnapshot.self, from: JSONEncoder().encode(s))
+        #expect(back == s)
+    }
 }

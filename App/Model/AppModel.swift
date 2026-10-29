@@ -26,6 +26,13 @@ enum AppErrorText {
     static let checkSchedule = "Konnte den automatischen Check nicht anmelden."
 }
 
+/// Ergebnis des Einlesens der Hintergrunddienste (LaunchAgents/-Daemons und Anmeldeobjekte).
+struct ServicesLoad: Sendable {
+    var items: [LaunchItem]
+    /// `sfltool dumpbtm` schlug fehl – die Anmeldeobjekte fehlen in `items`.
+    var loginItemsFailed: Bool
+}
+
 /// Alles, was `AppModel` von außen braucht – in Tests durch Attrappen ersetzbar.
 struct AppDependencies: Sendable {
     var engine: ScanEngine
@@ -49,12 +56,16 @@ struct AppDependencies: Sendable {
     var measureSystemRoots: CheckRunner.MeasureSystemRoots
     var notifier: any Notifier
     var agentService: any AgentService
+    /// Liest die Hintergrunddienste (nur lesend); Standard: keine.
+    var loadServices: @Sendable (ScanContext) async -> ServicesLoad = { _ in ServicesLoad(items: [], loginItemsFailed: false) }
+    /// Für den Check: Labels der entfernbaren verwaisten Hintergrunddienste; Standard: keine.
+    var orphanedServices: CheckRunner.OrphanedServices = { _ in [] }
 
     /// Der löschfreie Teil – dieselben Bausteine wie der normale Scan, ohne Remover.
     var check: CheckDependencies {
         CheckDependencies(
             engine: engine, keepList: keepList, history: history, measureSystemRoots: measureSystemRoots,
-            diskSpace: diskSpace, makeContext: makeContext, notifier: notifier)
+            diskSpace: diskSpace, makeContext: makeContext, notifier: notifier, orphanedServices: orphanedServices)
     }
 }
 
@@ -102,6 +113,15 @@ final class AppModel {
     /// Überbleibsel der alten Aufräum-Automatik (Karte oben im Tab „Speicher“, solange etwas existiert).
     var legacyItems: [LegacyItem] = []
     var showsLegacyCard: Bool { !legacyItems.isEmpty }
+    /// Hintergrunddienste (Tab „Hintergrunddienste“): LaunchAgents/-Daemons und Anmeldeobjekte.
+    var services: [LaunchItem] = []
+    /// Anmeldeobjekte konnten nicht gelesen werden (Hinweis in der Oberfläche).
+    var loginItemsFailed = false
+    var isLoadingServices = false
+    /// Wurden die Dienste in diesem App-Lauf schon einmal eingelesen?
+    private(set) var hasLoadedServices = false
+    /// Gewählte Dienst-IDs – nur entfernbare verwaiste, nie vorausgewählt.
+    var selectedServices: Set<String> = []
 
     /// UserDefaults-Schlüssel des Schalters „Trockenlauf“ im Menü „Entwickler“.
     static let dryRunDefaultsKey = "dryRun"
@@ -121,6 +141,9 @@ final class AppModel {
     @ObservationIgnored private var scanGeneration = 0
     @ObservationIgnored private var systemFindingsByID: [FindingID: Finding] = [:]
     @ObservationIgnored private var hasStartedSystemMeasurement = false
+    @ObservationIgnored private var hasStartedServicesLoad = false
+    /// Home-Ordner des Kontexts, mit dem `services` gelesen wurde – maßgeblich für „entfernbar“.
+    @ObservationIgnored private var servicesHome: URL?
     @ObservationIgnored private var systemGeneration = 0
     /// Läuft gerade ein An-/Abmelden? Weitere Wechsel werden nur gemerkt; der laufende übernimmt danach die aktuelle Wahl.
     @ObservationIgnored private var isApplyingSchedule = false
@@ -194,7 +217,7 @@ final class AppModel {
     /// „Jetzt prüfen“: derselbe Kern wie der LaunchAgent, im laufenden Prozess. Nicht während Scan, Entfernen,
     /// Messen oder eines anderen Checks.
     func runCheckNow() async {
-        guard !isChecking, !isScanning, !isRemoving, !isMeasuringSystemData else { return }
+        guard !isChecking, !isScanning, !isRemoving, !isMeasuringSystemData, !isLoadingServices else { return }
         isChecking = true
         let outcome = await BackgroundCheck.run(dependencies: deps.check)
         if outcome.notificationsAllowed {
@@ -246,7 +269,7 @@ final class AppModel {
     /// bootout fehlschlug, bleibt liegen (die Karte zeigt ihn weiter). Trockenlauf: kein bootout, nur melden.
     /// Ergebnis im Ergebnis-Banner, danach neu erkennen.
     func removeLegacy(includeExtras: Bool) async {
-        guard !isRemoving, !isScanning, !isMeasuringSystemData, !isChecking, !legacyItems.isEmpty else { return }
+        guard !isRemoving, !isScanning, !isMeasuringSystemData, !isChecking, !isLoadingServices, !legacyItems.isEmpty else { return }
         isRemoving = true
         removalProgress = "Alte Automatik wird entfernt …"
         await detectLegacy()
@@ -411,6 +434,119 @@ final class AppModel {
         await measureSystemData()
     }
 
+    // MARK: - Hintergrunddienste
+
+    /// Liest beim ersten Öffnen des Tabs, danach nie wieder automatisch (pro App-Start).
+    func loadServicesIfNeeded() async {
+        guard !hasStartedServicesLoad else { return }
+        await reloadServices()
+    }
+
+    /// „Neu prüfen“: liest die Dienste neu (nur lesend). Nicht während Scan, Entfernen, Messen oder Check.
+    func reloadServices() async {
+        guard !isLoadingServices, !isScanning, !isRemoving, !isMeasuringSystemData, !isChecking else { return }
+        hasStartedServicesLoad = true
+        isLoadingServices = true
+        let ctx = deps.makeContext(false)
+        let result = await deps.loadServices(ctx)
+        // Abgebrochen (z. B. Tabwechsel): verwerfen, beim nächsten Öffnen neu versuchen.
+        if Task.isCancelled {
+            isLoadingServices = false
+            hasStartedServicesLoad = false
+            return
+        }
+        applyServices(result, home: ctx.home)
+        isLoadingServices = false
+    }
+
+    private func applyServices(_ result: ServicesLoad, home: URL) {
+        services = result.items
+        loginItemsFailed = result.loginItemsFailed
+        servicesHome = home
+        hasLoadedServices = true
+        // Auswahl nur behalten, was weiterhin entfernbar ist.
+        let selectable = Set(result.items.filter(isServiceSelectable).map(\.id))
+        selectedServices.formIntersection(selectable)
+    }
+
+    /// Nur verwaiste, nicht-Apple, nicht-eigene LaunchAgents/-Daemons an erwarteter Stelle; Anmeldeobjekte nie.
+    func isServiceSelectable(_ item: LaunchItem) -> Bool {
+        guard let servicesHome else { return false }
+        return ServiceRemoval.isRemovable(item, home: servicesHome)
+    }
+
+    func toggleService(_ id: String) {
+        guard let item = services.first(where: { $0.id == id }), isServiceSelectable(item) else { return }
+        if selectedServices.contains(id) { selectedServices.remove(id) } else { selectedServices.insert(id) }
+    }
+
+    /// Funde (Papierkorb und/oder Admin) für die gewählten Dienste – Grundlage für Bestätigung und Plan.
+    func serviceFindings(for ids: Set<String>) -> [Finding] {
+        guard let servicesHome else { return [] }
+        return ServiceRemoval.finding(services.filter { ids.contains($0.id) }, home: servicesHome)
+    }
+
+    /// Nach Bestätigung: frisch einlesen (nur noch Entfernbares aus `ids`), laufende Agents per `launchctl bootout`
+    /// stoppen, dann den Plan über den bekannten Weg ausführen (Papierkorb bzw. Admin mit einer Passwortabfrage).
+    /// Ein Dienst, dessen bootout fehlschlug, bleibt liegen (seine plist wird nicht entfernt). Trockenlauf: kein
+    /// bootout, kein Admin – nur melden. Ergebnis im Ergebnis-Banner, danach neu einlesen.
+    func removeServices(_ ids: Set<String>, dryRun requestedDryRun: Bool = false) async {
+        guard !isRemoving, !isScanning, !isMeasuringSystemData, !isChecking, !isLoadingServices, !ids.isEmpty else { return }
+        isRemoving = true
+        removalProgress = "Hintergrunddienste werden entfernt …"
+        let runDry = dryRun || requestedDryRun
+        let ctx = deps.makeContext(false)
+
+        let fresh = await deps.loadServices(ctx)
+        applyServices(fresh, home: ctx.home)
+        let chosen = fresh.items.filter { ids.contains($0.id) && ServiceRemoval.isRemovable($0, home: ctx.home) }
+        guard !chosen.isEmpty else {
+            isRemoving = false
+            removalProgress = nil
+            return
+        }
+
+        let bootouts = await ServiceRemoval.bootout(chosen, runner: ctx.runner, home: ctx.home, dryRun: runDry)
+        let bootoutFailures = bootouts.filter {
+            if case .failed = $0.outcome { return true }
+            return false
+        }
+        let stillRunning = Set(bootoutFailures.compactMap(\.itemID))
+        var labels: [FindingID: (title: String, items: [String: String])] = [:]
+        for f in ServiceRemoval.finding(chosen, home: ctx.home) {
+            labels[f.id] = (f.title, Dictionary(f.items.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first }))
+        }
+        removalLabels = labels
+
+        let findings = ServiceRemoval.finding(chosen.filter { !stillRunning.contains($0.id) }, home: ctx.home)
+        var executed = RemovalReport(results: [], freedBytes: 0, failures: [])
+        if !findings.isEmpty {
+            let plan = RemovalPlan(findings: findings, selection: Self.selectAll(findings), options: RemovalOptions(dryRun: runDry))
+            executed = await deps.runner.run(plan) { [weak self] message in
+                Task { @MainActor [weak self] in
+                    guard let self, self.isRemoving else { return }
+                    self.removalProgress = message
+                }
+            }
+        }
+        // Erfolgreiche bootouts stecken im Ergebnis des Plans (ein Eintrag je Dienst); nur Fehlschläge zusätzlich.
+        lastRemoval = RemovalReport(
+            results: bootoutFailures + executed.results, freedBytes: executed.freedBytes,
+            failures: bootoutFailures + executed.failures)
+        lastRemovalWasDryRun = runDry
+        lastRemovalWasLegacy = false
+        selectedServices = []
+        isRemoving = false
+        removalProgress = nil
+        trashBytes = await deps.trash(ctx)
+        refreshSystemState()
+        await reloadServices()
+    }
+
+    private static func selectAll(_ findings: [Finding]) -> [FindingID: Set<String>] {
+        Dictionary(findings.map { ($0.id, Set($0.items.map(\.id))) }, uniquingKeysWith: { a, b in a.union(b) })
+    }
+
     // MARK: - Abfragen
 
     /// Nicht behaltene Funde des Tabs, nach Kategorie (`sortOrder`) gruppiert, je Kategorie nach Größe absteigend.
@@ -505,15 +641,25 @@ final class AppModel {
     func makePlan(tab: AppTab, options: RemovalOptions) -> RemovalPlan {
         var opts = options
         if dryRun { opts.dryRun = true }
+        if tab == .services {
+            let findings = serviceFindings(for: selectedServices)
+            return RemovalPlan(findings: findings, selection: Self.selectAll(findings), options: opts)
+        }
         let candidates = allFindings(in: tab).filter { !kept.contains($0.id) }
         return RemovalPlan(findings: candidates, selection: selection, options: opts)
     }
 
     func execute(_ plan: RemovalPlan) async {
-        guard !isRemoving, !isScanning, !isMeasuringSystemData, !isChecking else { return }
+        guard !isRemoving, !isScanning, !isMeasuringSystemData, !isChecking, !isLoadingServices else { return }
         // Schutz in der Tiefe: ein anderswo gebauter Plan darf im Trockenlauf nie echt laufen.
         if dryRun, !plan.options.dryRun {
             lastError = AppErrorText.dryRunPlan
+            return
+        }
+        // Hintergrunddienste brauchen vorher `launchctl bootout` – immer über den eigenen Weg.
+        if plan.allSteps.contains(where: { $0.0.category == .services }) {
+            let ids = plan.allSteps.filter { $0.0.category == .services }.flatMap { $0.1.map(\.id) }
+            await removeServices(Set(ids), dryRun: plan.options.dryRun)
             return
         }
         isRemoving = true
@@ -546,7 +692,7 @@ final class AppModel {
     }
 
     func emptyTrash() async {
-        guard !isRemoving, !isScanning, !isMeasuringSystemData, !isChecking else { return }
+        guard !isRemoving, !isScanning, !isMeasuringSystemData, !isChecking, !isLoadingServices else { return }
         isRemoving = true
         removalLabels = [:]
         removalProgress = "Papierkorb wird geleert …"
@@ -674,7 +820,17 @@ extension AppDependencies {
             history: check.history,
             measureSystemRoots: check.measureSystemRoots,
             notifier: check.notifier,
-            agentService: SMAppAgentService())
+            agentService: SMAppAgentService(),
+            loadServices: { ctx in await loadServicesLive(ctx) },
+            orphanedServices: check.orphanedServices)
+    }
+
+    /// LaunchAgents/-Daemons und Anmeldeobjekte parallel lesen (nur lesend).
+    static func loadServicesLive(_ ctx: ScanContext) async -> ServicesLoad {
+        async let agents = LaunchItemScanner().scan(ctx)
+        async let login = LoginItemReader.read(runner: ctx.runner)
+        let (items, loginItems) = await (agents, login)
+        return ServicesLoad(items: items + loginItems.items, loginItemsFailed: loginItems.failed)
     }
 
     /// Leert alle Papierkörbe, die der Finder zeigt (lokal, iCloud Drive, externe Volumes).
@@ -743,6 +899,7 @@ private struct LiveEnvironment {
                     hasFullDiskAccess: fda(), includeSlowChecks: slow,
                     userTempDir: tempDir)
             },
-            notifier: UserNotificationCenterNotifier())
+            notifier: UserNotificationCenterNotifier(),
+            orphanedServices: { ctx in await BackgroundCheck.orphanedServicesLive(ctx) })
     }
 }

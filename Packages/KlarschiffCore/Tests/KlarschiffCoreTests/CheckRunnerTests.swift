@@ -21,16 +21,22 @@ private func makeRunner(_ t: FixtureTree, _ findings: [Finding], keep: [FindingI
                         roots: [String: (title: String, size: Int64, isLowerBound: Bool)] = [:],
                         space: DiskSpace? = DiskSpace(free: 500 * gb, total: 1000 * gb),
                         scanners: [any KlarschiffCore.Scanner]? = nil,
-                        historyFile: URL? = nil) async throws -> (CheckRunner, CheckHistory) {
+                        historyFile: URL? = nil,
+                        orphans: [String]? = nil) async throws -> (CheckRunner, CheckHistory) {
     let engine = ScanEngine(scanners: scanners ?? [Stub(id: findings.first?.id.scannerID ?? "x", findings: findings)])
     let kl = KeepList(fileURL: t.root.appending(path: "keep.json"))
     for k in keep { try await kl.add(k) }
     let h = CheckHistory(fileURL: historyFile ?? t.root.appending(path: "h.json"))
+    let diskSpace: CheckRunner.DiskSpaceProvider = {
+        guard let space else { throw CocoaError(.fileReadUnknown) }
+        return space
+    }
+    if let orphans {
+        return (CheckRunner(engine: engine, keepList: kl, history: h, measureSystemRoots: { _ in roots },
+                            diskSpace: diskSpace, orphanedServices: { _ in orphans }), h)
+    }
     return (CheckRunner(engine: engine, keepList: kl, history: h,
-                        measureSystemRoots: { _ in roots }, diskSpace: {
-                            guard let space else { throw CocoaError(.fileReadUnknown) }
-                            return space
-                        }), h)
+                        measureSystemRoots: { _ in roots }, diskSpace: diskSpace), h)
 }
 
 @Suite struct CheckRunnerTests {
@@ -143,6 +149,40 @@ private func makeRunner(_ t: FixtureTree, _ findings: [Finding], keep: [FindingI
                 == CheckNotification(title: "Klarschiff 2", body: "\(ByteFormat.string(52 * gb)) aufräumbar", tab: .storage))
         #expect(CheckNotificationText.make(snap([.growth(id: "systemdata.assets", title: "A", from: 0, to: 6 * gb)]))?.tab == .systemData)
         #expect(CheckNotificationText.make(snap([.growth(id: "unbekannt/k", title: "A", from: 0, to: 6 * gb)]))?.tab == .storage)
+    }
+
+    @Test func orphanedServicesRecordedAndAlertedWhenNew() async throws {
+        let t = try FixtureTree()
+        let (r, h) = try await makeRunner(t, [], orphans: ["com.b.agent", "com.a.agent", "com.a.agent"])
+        try await h.append(CheckSnapshot(date: Date(timeIntervalSince1970: 1_000), cleanableTotal: 0, freeBytes: 500 * gb,
+                                         totalBytes: 1000 * gb, sizes: [:], titles: [:], alerts: [],
+                                         orphanedServiceLabels: ["com.a.agent"]))
+        let s = await r.run(.test(root: t.root))
+        #expect(s.orphanedServiceLabels == ["com.a.agent", "com.b.agent"])
+        #expect(s.alerts == [.orphanedServices(labels: ["com.b.agent"])])
+    }
+
+    @Test func orphanedServicesDefaultEmpty() async throws {
+        let t = try FixtureTree()
+        let (r, _) = try await makeRunner(t, [])
+        let s = await r.run(.test(root: t.root))
+        #expect(s.orphanedServiceLabels == [])
+    }
+
+    @Test func orphanedServicesNotificationText() {
+        func snap(_ alerts: [CheckAlert]) -> CheckSnapshot {
+            CheckSnapshot(date: Date(), cleanableTotal: 0, freeBytes: 0, totalBytes: 0, sizes: [:], titles: [:], alerts: alerts)
+        }
+        let low = CheckAlert.lowSpace(free: 18 * gb, total: 1000 * gb)
+        #expect(CheckNotificationText.make(snap([.orphanedServices(labels: ["a", "b"]), low, .cleanable(total: 52 * gb)]))
+                == CheckNotification(title: "Klarschiff 2", body: "2 neue verwaiste Hintergrunddienste", tab: .services))
+        #expect(CheckNotificationText.make(snap([.orphanedServices(labels: ["a"])]))
+                == CheckNotification(title: "Klarschiff 2", body: "1 neuer verwaister Hintergrunddienst", tab: .services))
+        // Wachstum hat Vorrang.
+        let g = CheckAlert.growth(id: "xcode.dd/a", title: "X", from: 0, to: 6 * gb)
+        #expect(CheckNotificationText.make(snap([g, .orphanedServices(labels: ["a"])]))?.tab == .developer)
+        // Leere Liste zählt nicht.
+        #expect(CheckNotificationText.make(snap([.orphanedServices(labels: [])])) == nil)
     }
 
     @Test func noAlertsNoNotification() {

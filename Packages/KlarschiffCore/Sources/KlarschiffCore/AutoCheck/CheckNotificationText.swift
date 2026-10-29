@@ -12,17 +12,19 @@ public struct CheckNotification: Sendable, Equatable {
     }
 }
 
-/// Text der einen Mitteilung pro Check. Priorität: Wachstum > knapper Speicher > Aufräumbares.
+/// Text der einen Mitteilung pro Check. Priorität: Wachstum > neue verwaiste Hintergrunddienste > knapper Speicher > Aufräumbares.
 public enum CheckNotificationText {
     public static let title = "Klarschiff 2"
 
     public static func make(_ s: CheckSnapshot) -> CheckNotification? {
         var growth: (id: String, title: String, from: Int64, to: Int64)?
+        var orphans: Int?
         var low: Int64?
         var cleanable: Int64?
         for a in s.alerts {
             switch a {
             case .growth(let id, let t, let from, let to): if growth == nil { growth = (id, t, from, to) }
+            case .orphanedServices(let labels): if orphans == nil, !labels.isEmpty { orphans = labels.count }
             case .lowSpace(let free, _): if low == nil { low = free }
             case .cleanable(let total): if cleanable == nil { cleanable = total }
             }
@@ -32,6 +34,9 @@ public enum CheckNotificationText {
             if let c = cleanable { body += " · \(ByteFormat.string(c)) aufräumbar" }
             return CheckNotification(title: title, body: body, tab: tab(forGrowthID: g.id))
         }
+        if let n = orphans {
+            return CheckNotification(title: title, body: orphanedServices(n), tab: .services)
+        }
         if let free = low {
             return CheckNotification(title: title, body: "Nur noch \(ByteFormat.string(free)) frei", tab: .storage)
         }
@@ -39,6 +44,11 @@ public enum CheckNotificationText {
             return CheckNotification(title: title, body: "\(ByteFormat.string(c)) aufräumbar", tab: .storage)
         }
         return nil
+    }
+
+    /// „2 neue verwaiste Hintergrunddienste“ (Einzahl bei genau einem).
+    public static func orphanedServices(_ n: Int) -> String {
+        n == 1 ? "1 neuer verwaister Hintergrunddienst" : "\(n) neue verwaiste Hintergrunddienste"
     }
 
     /// `systemdata.*` → Systemdaten; sonst Tab der Kategorie des Scanners (ID = `scannerID/key`); unbekannt → Speicher.

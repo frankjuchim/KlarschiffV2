@@ -6,26 +6,32 @@ public struct CheckRunner: Sendable {
     /// Bereichs-ID → (Titel, Größe, nur Untergrenze?).
     public typealias MeasureSystemRoots = @Sendable (ScanContext) async -> [String: (title: String, size: Int64, isLowerBound: Bool)]
     public typealias DiskSpaceProvider = @Sendable () throws -> DiskSpace
+    /// Labels der entfernbaren verwaisten Hintergrunddienste (nur lesend ermittelt).
+    public typealias OrphanedServices = @Sendable (ScanContext) async -> [String]
 
     private let engine: ScanEngine
     private let keepList: KeepList
     private let history: CheckHistory
     private let measureSystemRoots: MeasureSystemRoots
     private let diskSpace: DiskSpaceProvider
+    private let orphanedServices: OrphanedServices
 
     /// `measureSystemRoots` liefert Bereichs-ID → (Titel, Größe); der Runner stellt `systemdata.` voran.
     public init(engine: ScanEngine, keepList: KeepList, history: CheckHistory,
-                measureSystemRoots: @escaping MeasureSystemRoots, diskSpace: @escaping DiskSpaceProvider) {
+                measureSystemRoots: @escaping MeasureSystemRoots, diskSpace: @escaping DiskSpaceProvider,
+                orphanedServices: @escaping OrphanedServices = { _ in [] }) {
         self.engine = engine
         self.keepList = keepList
         self.history = history
         self.measureSystemRoots = measureSystemRoots
         self.diskSpace = diskSpace
+        self.orphanedServices = orphanedServices
     }
 
     public func run(_ ctx: ScanContext) async -> CheckSnapshot {
         let report = await engine.run(ctx) { _, _ in }
         let roots = await measureSystemRoots(ctx)
+        let orphans = Array(Set(await orphanedServices(ctx))).sorted()
         let kept = await keepList.all
 
         var sizes: [String: Int64] = [:]
@@ -56,7 +62,7 @@ public struct CheckRunner: Sendable {
         let space = try? diskSpace()
         var snapshot = CheckSnapshot(date: ctx.now, cleanableTotal: cleanable, freeBytes: space?.free ?? 0,
                                      totalBytes: space?.total ?? 0, sizes: sizes, titles: titles, alerts: [],
-                                     lowerBoundIDs: lowerBound)
+                                     lowerBoundIDs: lowerBound, orphanedServiceLabels: orphans)
         snapshot.alerts = GrowthWatcher.alerts(previous: await history.latest(), current: snapshot)
         // Ohne Plattenplatz ist der Lauf unvollständig: zurückgeben, aber nicht in den Verlauf schreiben.
         if space != nil { try? await history.append(snapshot) }

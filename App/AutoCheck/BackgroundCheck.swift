@@ -11,6 +11,8 @@ struct CheckDependencies: Sendable {
     var diskSpace: @Sendable () throws -> DiskSpace
     var makeContext: @Sendable (_ includeSlowChecks: Bool) -> ScanContext
     var notifier: any Notifier
+    /// Labels der entfernbaren verwaisten Hintergrunddienste (nur lesend); Standard: keine.
+    var orphanedServices: CheckRunner.OrphanedServices = { _ in [] }
 }
 
 /// Ein Check-Lauf: Scan + Wurzel-Systembereiche + Verlauf (`CheckRunner`), danach höchstens eine Mitteilung.
@@ -29,7 +31,8 @@ enum BackgroundCheck {
     static func run(dependencies deps: CheckDependencies) async -> Outcome {
         let runner = CheckRunner(
             engine: deps.engine, keepList: deps.keepList, history: deps.history,
-            measureSystemRoots: deps.measureSystemRoots, diskSpace: deps.diskSpace)
+            measureSystemRoots: deps.measureSystemRoots, diskSpace: deps.diskSpace,
+            orphanedServices: deps.orphanedServices)
         let snapshot = await runner.run(deps.makeContext(false))
         let notification = CheckNotificationText.make(snapshot)
         // Nie fragen (kein Dialog aus dem Hintergrund) – nur den gespeicherten Entscheid lesen. Abgelehnt oder
@@ -72,5 +75,14 @@ enum BackgroundCheck {
             roots[area.id] = (area.title, size, area.isLowerBound)
         }
         return roots
+    }
+
+    /// Produktion: verwaiste Hintergrunddienste, die Klarschiff 2 entfernen dürfte (nur lesend, `launchctl print`).
+    /// Anmeldeobjekte, eigene Agents und alles nicht Entfernbare zählen nicht.
+    static func orphanedServicesLive(_ ctx: ScanContext) async -> [String] {
+        await LaunchItemScanner().scan(ctx)
+            .filter { $0.isOrphaned && !$0.isOwnAgent && $0.scope != .loginItem && ServiceRemoval.isRemovable($0, home: ctx.home) }
+            .map(\.label)
+            .sorted()
     }
 }

@@ -6,7 +6,7 @@ struct CheckHistoryRow: Equatable {
     var date: String
     var cleanable: String
     var free: String
-    /// Wachstum zuerst, dann knapper Speicher. „Aufräumbar“ steht schon in `cleanable` und fehlt hier.
+    /// Wachstum zuerst, dann neue verwaiste Hintergrunddienste, dann knapper Speicher. „Aufräumbar“ steht schon in `cleanable` und fehlt hier.
     var alerts: [String]
 
     init(_ s: CheckSnapshot, timeZone: TimeZone = .current) {
@@ -16,15 +16,18 @@ struct CheckHistoryRow: Equatable {
         cleanable = "\(ByteFormat.string(s.cleanableTotal)) aufräumbar"
         free = "\(ByteFormat.string(s.freeBytes)) frei"
         var growth: [String] = []
+        var orphans: [String] = []
         var low: [String] = []
         for alert in s.alerts {
             switch alert {
             case .growth(_, let title, let from, let to): growth.append("\(title) +\(ByteFormat.string(to - from))")
+            case .orphanedServices(let labels):
+                if !labels.isEmpty { orphans.append(CheckNotificationText.orphanedServices(labels.count)) }
             case .lowSpace(let free, _): low.append("Nur noch \(ByteFormat.string(free)) frei")
             case .cleanable: break
             }
         }
-        alerts = growth + low
+        alerts = growth + orphans + low
     }
 
     /// Neueste zuerst.
