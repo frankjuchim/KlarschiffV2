@@ -59,7 +59,7 @@ public struct PathScanner: Scanner {
 
         switch rule.grouping {
         case .single:
-            let items = groups.flatMap(\.items)
+            let items = Self.dated(groups.flatMap(\.items), rule.itemDate)
             guard !items.isEmpty else { return [] }
             return [makeFinding(key: "all", title: rule.title, items: items,
                                 size: Self.total(items), blocking: blocking, ctx: ctx)]
@@ -141,6 +141,37 @@ public struct PathScanner: Scanner {
             let rest = name[r.upperBound...]
             return rest.isEmpty ? name : rest.replacingOccurrences(of: "--", with: "/")
         }
+    }
+
+    /// Setzt Datum und deutsches Detail je Eintrag und sortiert neueste zuerst (ohne Datum zuletzt).
+    static func dated(_ items: [FindingItem], _ kind: ItemDate) -> [FindingItem] {
+        guard case .xcodeArchive = kind else { return items }
+        let withDates = items.map { item -> FindingItem in
+            var item = item
+            if let url = item.url, let date = archiveDate(url) {
+                item.date = date
+                item.detail = GermanDate.string(date)
+            }
+            return item
+        }
+        return withDates.enumerated().sorted { a, b in
+            switch (a.element.date, b.element.date) {
+            case let (x?, y?) where x != y: return x > y
+            case (.some, nil): return true
+            case (nil, .some): return false
+            default: return a.offset < b.offset
+            }
+        }.map(\.element)
+    }
+
+    /// `CreationDate` aus der `Info.plist` des Archivs, sonst Änderungsdatum des Ordners.
+    private static func archiveDate(_ archive: URL) -> Date? {
+        if let data = try? Data(contentsOf: archive.appending(path: "Info.plist")),
+           let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+           let date = plist["CreationDate"] as? Date {
+            return date
+        }
+        return (try? FileManager.default.attributesOfItem(atPath: archive.path))?[.modificationDate] as? Date
     }
 
     private static func total(_ items: [FindingItem]) -> Int64 {

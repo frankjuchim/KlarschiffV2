@@ -132,7 +132,7 @@ struct CatalogTests {
         let logs = Catalog.rule("system.oldLogs")
         #expect(logs.minAgeDays == 30 && logs.excludeNames == ["CoreSimulator"] && logs.patterns == ["Library/Logs"])
         let archives = Catalog.rule("xcode.archives")
-        #expect(archives.risk == .review && archives.method == .trash && archives.grouping == .perMatch)
+        #expect(archives.risk == .review && archives.method == .trash && archives.grouping == .single)
         #expect(Catalog.rule("personal.mailDownloads").needsFullDiskAccess)
         #expect(Catalog.rule("xcode.libraryDeveloper").base == .absolute)
     }

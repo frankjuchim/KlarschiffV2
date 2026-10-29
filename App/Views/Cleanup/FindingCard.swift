@@ -39,7 +39,9 @@ struct FindingCard: View {
                     }
                 }
                 Spacer(minLength: 12)
-                sizeColumn
+                if !Self.hidesSizeColumn(finding) {
+                    sizeColumn
+                }
                 if canExpand {
                     Button {
                         withAnimation(.snappy) { expanded.toggle() }
@@ -83,6 +85,13 @@ struct FindingCard: View {
         .sheet(isPresented: $showCommand) {
             CommandSheet(title: finding.title, lines: finding.commandPreview)
         }
+    }
+
+    /// Hinweis-Karten ohne messbare Größe zeigen keine Größenspalte (kein „Null Byte“).
+    /// „braucht Vollzugriff“ bleibt sichtbar.
+    nonisolated static func hidesSizeColumn(_ f: Finding) -> Bool {
+        let lacksAccess = f.needsFullDiskAccess && f.size == nil
+        return f.risk == .hintOnly && (f.size ?? 0) == 0 && !lacksAccess
     }
 
     private var selectionState: SelectionCircle.State {
@@ -253,7 +262,7 @@ struct HintActionButton: View {
         }
     }
 
-    static func openLabel(for url: URL) -> String {
+    nonisolated static func openLabel(for url: URL) -> String {
         url.absoluteString.contains("Software-Update") ? "Softwareupdate öffnen" : "Öffnen"
     }
 }

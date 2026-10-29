@@ -134,7 +134,7 @@ struct ConfirmSheet: View {
         let rows: [(title: String, count: Int, size: Int64)]
     }
 
-    static func groups(for plan: RemovalPlan) -> [MethodGroup] {
+    nonisolated static func groups(for plan: RemovalPlan) -> [MethodGroup] {
         func rows(_ steps: [(Finding, [FindingItem])]) -> [(title: String, count: Int, size: Int64)] {
             steps.map { f, items in (f.title, items.count, items.reduce(0) { $0 + ($1.size ?? 0) }) }
         }

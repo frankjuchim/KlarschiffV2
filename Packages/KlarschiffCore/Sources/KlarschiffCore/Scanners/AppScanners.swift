@@ -9,8 +9,13 @@ private func bundleID(of app: URL) -> String? {
     return id
 }
 
-private func isXcodeApp(_ name: String) -> Bool {
-    name.hasPrefix("Xcode") && name.hasSuffix(".app")
+/// Xcode-Version: `Xcode.app`, `Xcode-…`/`Xcode_…`/`Xcode ….app` oder ein Bundle mit `com.apple.dt.Xcode`.
+/// Bewusst eng, damit Drittanbieter-Apps wie „Xcodes.app“ nicht als Xcode gelten.
+private func isXcodeApp(_ app: URL) -> Bool {
+    let name = app.lastPathComponent
+    guard name.hasSuffix(".app") else { return false }
+    if name == "Xcode.app" || ["Xcode-", "Xcode_", "Xcode "].contains(where: name.hasPrefix) { return true }
+    return bundleID(of: app) == "com.apple.dt.Xcode"
 }
 
 private func isRealDirectory(_ url: URL) -> Bool {
@@ -37,7 +42,7 @@ public struct UnusedAppsScanner: Scanner {
         let cutoff = ctx.now.addingTimeInterval(-180 * 86_400)
         var items: [FindingItem] = []
         // Xcode-Versionen deckt `ExtraXcodeScanner` ab.
-        for name in names.sorted() where name.hasSuffix(".app") && !name.hasPrefix(".") && !isXcodeApp(name) {
+        for name in names.sorted() where name.hasSuffix(".app") && !name.hasPrefix(".") && !isXcodeApp(dir.appending(path: name)) {
             try Task.checkCancellation()
             let url = dir.appending(path: name)
             guard isRealDirectory(url), let bid = bundleID(of: url),
@@ -127,7 +132,7 @@ public struct ExtraXcodeScanner: Scanner {
         }
         let dir = ctx.absolute("/Applications")
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else { return [] }
-        let xcodes = names.sorted().filter { isXcodeApp($0) && isRealDirectory(dir.appending(path: $0)) }
+        let xcodes = names.sorted().filter { isXcodeApp(dir.appending(path: $0)) && isRealDirectory(dir.appending(path: $0)) }
         // Ohne gewähltes Xcode (Command Line Tools oder Fehler): Xcode.app gilt als aktiv, sonst eine einzige Version.
         if activeApp == nil {
             activeApp = xcodes.contains("Xcode.app") ? "Xcode.app" : (xcodes.count == 1 ? xcodes[0] : nil)

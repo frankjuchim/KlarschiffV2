@@ -116,6 +116,30 @@ struct AppScannerTests {
         #expect(fs.first?.items.map(\.name) == ["Other.app"])
     }
 
+    @Test func xcodesThirdPartyAppIsNotTreatedAsXcode() async throws {
+        let t = try FixtureTree()
+        try makeApp(t, "Applications/Xcode.app", bundleID: "com.apple.dt.Xcode")
+        try makeApp(t, "Applications/Xcode-beta.app", bundleID: "com.apple.dt.Xcode")
+        try makeApp(t, "Applications/Xcodes.app", bundleID: "com.robotsandpencils.XcodesApp", modifiedDaysAgo: 400)
+        let runner = FakeCommandRunner()
+        runner.stub("/usr/bin/xcode-select", ["-p"], result: CommandResult(exitCode: 0, stdout: "/Applications/Xcode.app/Contents/Developer\n", stderr: ""))
+        let extra = try await ExtraXcodeScanner().scan(.test(root: t.root, runner: runner))
+        #expect(extra.map(\.id.key) == ["Xcode-beta.app"])
+        let unused = try await UnusedAppsScanner(lastUsed: { _ in nil }).scan(.test(root: t.root))
+        #expect(unused.first?.items.map(\.name) == ["Xcodes.app"])
+    }
+
+    @Test func xcodeNameVariantsAndBundleIDCount() async throws {
+        let t = try FixtureTree()
+        try makeApp(t, "Applications/Xcode.app", bundleID: "com.apple.dt.Xcode")
+        try makeApp(t, "Applications/Xcode_15.app", bundleID: "com.apple.dt.Xcode")
+        try makeApp(t, "Applications/Xcode 16.app", bundleID: "com.apple.dt.Xcode")
+        try makeApp(t, "Applications/Altes Werkzeug.app", bundleID: "com.apple.dt.Xcode")
+        try makeApp(t, "Applications/XcodeHelper.app", bundleID: "com.foo.helper")
+        let fs = try await ExtraXcodeScanner().scan(.test(root: t.root))
+        #expect(fs.map(\.id.key) == ["Altes Werkzeug.app", "Xcode 16.app", "Xcode_15.app"])
+    }
+
     @Test func registeredInCatalog() {
         let ids = Catalog.allScanners().map(\.id)
         #expect(["apps.unused", "apps.leftovers", "xcode.extraVersions"].allSatisfy(ids.contains))

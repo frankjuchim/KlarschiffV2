@@ -71,6 +71,7 @@ private func tempKeepFile() -> URL {
 @MainActor
 private func makeModel(
     _ findings: [Finding], keepFile: URL = tempKeepFile(), dryRun: Bool = false,
+    defaults: UserDefaults = tempDefaults(),
     scanner: (any KlarschiffCore.Scanner)? = nil,
     emptyTrash: @escaping @Sendable (Bool) async throws -> RemovalReport = { _ in
         RemovalReport(results: [], freedBytes: 0, failures: [])
@@ -102,7 +103,15 @@ private func makeModel(
         emptyTrash: emptyTrash,
         dryRun: dryRun,
         terminate: { _ in false })
-    return AppModel(dependencies: deps)
+    return AppModel(dependencies: deps, defaults: defaults)
+}
+
+/// Frische, leere UserDefaults-Suite je Test.
+private func tempDefaults() -> UserDefaults {
+    let name = "klarschiff-apptests-\(UUID().uuidString)"
+    let d = UserDefaults(suiteName: name)!
+    d.removePersistentDomain(forName: name)
+    return d
 }
 
 // MARK: - Tests
@@ -392,4 +401,112 @@ private func makeModel(
     #expect(model.label(for: ItemResult(findingID: gone.id, itemID: nil, outcome: .failed("x"))) == "Alter Cache")
     let unknown = FindingID(scannerID: "system.trash", key: "all")
     #expect(model.label(for: ItemResult(findingID: unknown, itemID: "foo.txt", outcome: .failed("x"))) == "foo.txt")
+}
+
+// MARK: - Trockenlauf-Schalter
+
+@Test @MainActor func dryRunToggleForcesPlanAndPersists() async {
+    let safe = finding("safe", category: .appCaches, risk: .safe, items: [item("a", size: 10)])
+    let defaults = tempDefaults()
+    let model = makeModel([safe], dryRun: false, defaults: defaults)
+    await model.scan(includeSlowChecks: false)
+    #expect(model.dryRun == false)
+    #expect(model.isDryRunForced == false)
+
+    model.setDryRunSetting(true)
+    #expect(model.dryRun)
+    #expect(model.makePlan(tab: .storage, options: RemovalOptions()).options.dryRun)
+    #expect(defaults.bool(forKey: AppModel.dryRunDefaultsKey))
+    #expect(AppModel.dryRunDefaultsKey == "dryRun")
+
+    // Ein echter Plan wird bei eingeschaltetem Schalter verweigert.
+    let livePlan = RemovalPlan(findings: [safe], selection: model.selection, options: RemovalOptions(dryRun: false))
+    await model.execute(livePlan)
+    #expect(model.lastRemoval == nil)
+    #expect(model.lastError == AppErrorText.dryRunPlan)
+
+    // Gespeichert: ein neues Modell mit denselben Defaults startet im Trockenlauf.
+    #expect(makeModel([], dryRun: false, defaults: defaults).dryRun)
+
+    model.setDryRunSetting(false)
+    #expect(model.dryRun == false)
+    #expect(model.makePlan(tab: .storage, options: RemovalOptions()).options.dryRun == false)
+}
+
+@Test @MainActor func dryRunForcedByLaunchFlagCannotBeSwitchedOff() async {
+    let safe = finding("safe", category: .appCaches, risk: .safe, items: [item("a", size: 10)])
+    let defaults = tempDefaults()
+    let model = makeModel([safe], dryRun: true, defaults: defaults)
+    await model.scan(includeSlowChecks: false)
+    #expect(model.isDryRunForced)
+    #expect(model.dryRun)
+
+    model.setDryRunSetting(false)
+    #expect(model.dryRun)
+    #expect(model.makePlan(tab: .storage, options: RemovalOptions()).options.dryRun)
+}
+
+@Test @MainActor func emptyTrashUsesToggledDryRun() async {
+    let seen = Mutex<Bool?>(nil)
+    let model = makeModel([], dryRun: false, emptyTrash: { dry in
+        seen.withLock { $0 = dry }
+        return RemovalReport(results: [], freedBytes: 0, failures: [])
+    })
+    model.setDryRunSetting(true)
+    await model.emptyTrash()
+    #expect(seen.withLock { $0 } == true)
+}
+
+// MARK: - Reine UI-Helfer
+
+@Test func hintCardHidesEmptySize() {
+    func hint(size: Int64?, fda: Bool = false) -> Finding {
+        Finding(
+            id: FindingID(scannerID: "test.scanner", key: "h"), category: .appCaches, title: "h", summary: "",
+            risk: .hintOnly, method: .hint(nil), items: [], size: size, blockingApps: [], keepSuggested: false,
+            commandPreview: [], needsFullDiskAccess: fda)
+    }
+    #expect(FindingCard.hidesSizeColumn(hint(size: nil)))
+    #expect(FindingCard.hidesSizeColumn(hint(size: 0)))
+    #expect(!FindingCard.hidesSizeColumn(hint(size: 5_000)))
+    #expect(!FindingCard.hidesSizeColumn(hint(size: nil, fda: true)))   // „braucht Vollzugriff“ bleibt sichtbar
+    let review = finding("r", category: .appCaches, risk: .review, items: [])
+    #expect(!FindingCard.hidesSizeColumn(review))
+}
+
+@Test func confirmGroupsTextsAndDirectDeleteMove() {
+    let big = RemovalPlan.directDeleteThreshold + 1
+    let trash = finding("trash", category: .appCaches, risk: .safe, items: [item("t", size: 1)])
+    let huge = finding("huge", category: .apps, risk: .review, items: [item("h", size: big)])
+    let del = finding("del", category: .appCaches, risk: .safe, items: [item("d", size: 2)], method: .delete)
+    let step = AdminStep(executable: "/bin/rm", arguments: ["-rf", "/usr/local/texlive/2022"])
+    let admin = finding("admin", category: .toolchains, risk: .review, items: [item("a", size: 3)], method: .admin([step]))
+    let cmd = ToolCommand(tool: "/opt/homebrew/bin/brew", arguments: ["cleanup"], timeout: .seconds(5))
+    let tool = finding("tool", category: .homebrew, risk: .safe, items: [item("x", size: 4)], method: .tool([cmd], fallback: nil))
+    let all = [trash, huge, del, admin, tool]
+    let selection = Dictionary(uniqueKeysWithValues: all.map { ($0.id, Set($0.items.map(\.id))) })
+
+    let groups = ConfirmSheet.groups(for: RemovalPlan(findings: all, selection: selection, options: RemovalOptions()))
+    #expect(groups.map(\.text) == [
+        "Über brew entfernt", "In den Papierkorb",
+        "Wird direkt gelöscht – nicht im Papierkorb", "Braucht dein Admin-Passwort (eine Abfrage)",
+    ])
+    #expect(groups.first { $0.id == "trash" }?.rows.map(\.title) == ["trash", "huge"])
+    #expect(groups.first { $0.id == "delete" }?.rows.map(\.title) == ["del"])
+    #expect(groups.first { $0.id == "delete" }?.emphasized == true)
+    #expect(groups.first { $0.id == "admin" }?.rows.map(\.size) == [3])
+
+    // „Direkt löschen“ verschiebt den Kandidaten vom Papierkorb in die Lösch-Gruppe.
+    let moved = ConfirmSheet.groups(for: RemovalPlan(
+        findings: all, selection: selection, options: RemovalOptions(deleteDirectly: [huge.id])))
+    #expect(moved.first { $0.id == "trash" }?.rows.map(\.title) == ["trash"])
+    #expect(moved.first { $0.id == "delete" }?.rows.map(\.title) == ["huge", "del"])
+}
+
+@Test func hintOpenLabelAndFailureText() {
+    #expect(HintActionButton.openLabel(for: URL(string: "x-apple.systempreferences:com.apple.Software-Update-Settings.extension")!)
+            == "Softwareupdate öffnen")
+    #expect(HintActionButton.openLabel(for: URL(string: "https://example.com")!) == "Öffnen")
+    #expect(ResultBanner.failureText(1) == "1 Eintrag konnte nicht entfernt werden.")
+    #expect(ResultBanner.failureText(3) == "3 Einträge konnten nicht entfernt werden.")
 }

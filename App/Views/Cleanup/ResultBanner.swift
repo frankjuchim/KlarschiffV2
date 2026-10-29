@@ -67,7 +67,7 @@ struct ResultBanner: View {
     }
 
     /// „n Einträge konnten nicht entfernt werden.“ (Einzahl bei genau einem Eintrag).
-    static func failureText(_ n: Int) -> String {
+    nonisolated static func failureText(_ n: Int) -> String {
         n == 1 ? "1 Eintrag konnte nicht entfernt werden." : "\(n) Einträge konnten nicht entfernt werden."
     }
 

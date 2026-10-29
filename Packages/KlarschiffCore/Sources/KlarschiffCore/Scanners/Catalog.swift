@@ -176,10 +176,10 @@ public enum Catalog {
             risk: .safe, method: .delete, blockingApps: xcodeApps),
         PathRule(
             id: "xcode.archives", category: .xcode,
-            title: "Archiv",
-            summary: "Ein mit Xcode erstelltes App-Archiv. Brauchst du es noch zum Hochladen oder für Absturzberichte (dSYMs), behalte es.",
+            title: "Xcode-Archive",
+            summary: "Mit Xcode erstellte App-Archive, neueste zuerst. Brauchst du eines noch zum Hochladen oder für Absturzberichte (dSYMs), wähle es ab.",
             base: .home, patterns: ["Library/Developer/Xcode/Archives/*/*"],
-            risk: .review, method: .trash, grouping: .perMatch, matchName: .withoutExtension),
+            risk: .review, method: .trash, itemDate: .xcodeArchive),
         PathRule(
             id: "xcode.deviceLogs", category: .xcode,
             title: "Geräte-Protokolle",

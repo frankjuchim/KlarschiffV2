@@ -27,6 +27,13 @@ public enum MatchName: Sendable {
     case huggingFace
 }
 
+/// Datum je Eintrag: wird als `date` und deutsches `detail` gesetzt; Einträge dann neueste zuerst.
+public enum ItemDate: Sendable {
+    case none
+    /// Xcode-Archiv: `CreationDate` aus `Info.plist`, sonst Änderungsdatum des Ordners.
+    case xcodeArchive
+}
+
 /// Deklarative Beschreibung eines dateibasierten Funds.
 public struct PathRule: Sendable {
     public var id: String
@@ -50,13 +57,14 @@ public struct PathRule: Sendable {
     /// Begleitdateien: zu jedem Treffer `<name ohne Endung>.<ext>` im selben Ordner, falls vorhanden,
     /// als weiterer Eintrag desselben Funds (z. B. die `.ini` neben einem Android-`.avd`-Ordner).
     public var companionExtensions: [String]
+    public var itemDate: ItemDate
 
     public init(
         id: String, category: Category, title: String, summary: String, base: PathBase,
         patterns: [String], risk: Risk, method: RemovalMethod, blockingApps: [AppRef] = [],
         minAgeDays: Int? = nil, minSize: Int64 = 1, grouping: Grouping = .single,
         needsFullDiskAccess: Bool = false, excludeNames: Set<String> = [], matchName: MatchName = .lastComponent,
-        companionExtensions: [String] = []
+        companionExtensions: [String] = [], itemDate: ItemDate = .none
     ) {
         self.id = id
         self.category = category
@@ -74,5 +82,6 @@ public struct PathRule: Sendable {
         self.excludeNames = excludeNames
         self.matchName = matchName
         self.companionExtensions = companionExtensions
+        self.itemDate = itemDate
     }
 }

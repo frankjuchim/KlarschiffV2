@@ -201,10 +201,10 @@ Pfade mit `~` = Home, `$C` = `DARWIN_USER_CACHE_DIR`.
 | DerivedData | `~/Library/Developer/Xcode/DerivedData/*` | S | `delete` | Xcode |
 | SwiftUI-Previews | `~/Library/Developer/Xcode/UserData/Previews` | S | `delete` | Xcode |
 | Device-Support-Dateien | `~/Library/Developer/Xcode/*DeviceSupport/*` je Version; neueste je Plattform = `keepSuggested` | S | `trash` | Xcode |
-| Archives | `~/Library/Developer/Xcode/Archives/*/*` je Archiv mit Datum | P | `trash` | – |
+| Archives | `~/Library/Developer/Xcode/Archives/*/*` – **ein** Fund, je Archiv ein Eintrag mit Datum (`CreationDate` aus `Info.plist`, sonst Ordner-Änderungsdatum), neueste zuerst | P | `trash` | – |
 | Geräte-Protokolle | `~/Library/Developer/Xcode/iOS Device Logs`, `~/Library/Developer/Xcode/Products` | S | `trash` | Xcode |
 | Dokumentations-Cache | `~/Library/Developer/Xcode/DocumentationCache`, `~/Library/Developer/Xcode/DocumentationIndex` | S | `delete` | Xcode |
-| Alte/zusätzliche Xcode-Versionen | `/Applications/Xcode*.app` außer der von `xcode-select -p` | P | `trash` | jeweilige Instanz |
+| Alte/zusätzliche Xcode-Versionen | `/Applications/Xcode.app`, `Xcode-*.app`, `Xcode_*.app`, `Xcode *.app` oder Bundle-ID `com.apple.dt.Xcode` (nicht z. B. „Xcodes.app“) außer der von `xcode-select -p` | P | `trash` | jeweilige Instanz |
 | /Library/Developer aufgeschlüsselt | `/Library/Developer/CommandLineTools`, `/Library/Developer/CoreSimulator/Volumes` (nur Anzeige → Runtimes) | H | Hinweis | – |
 
 **Simulatoren**
@@ -245,7 +245,8 @@ Pfade mit `~` = Home, `$C` = `DARWIN_USER_CACHE_DIR`.
 | Carthage | `~/Library/Caches/org.carthage.CarthageKit` | S | `delete` |
 | Rust | `~/.cargo/registry/cache`, `~/.cargo/git/db`; Toolchains `~/.rustup/toolchains/*` (neueste stable = `keepSuggested`) | S / P | `delete` / `tool`: `rustup toolchain uninstall <name>` |
 | Go | `~/go/pkg/mod`, `~/Library/Caches/go-build` | S | `tool`: `go clean -modcache` / `go clean -cache`; Fallback `delete` |
-| Ruby-Gems-Cache | `~/.gem`, `~/.rbenv/versions/*` | P | `trash` |
+| Ruby-Gems-Cache | `~/.gem` | P | `trash` |
+| rbenv-Ruby-Versionen | `~/.rbenv/versions/*`; je Version ein eigener Fund wie bei nvm/pyenv, neueste = `keepSuggested` („Neueste – behalten empfohlen“) | P | `trash` |
 | Browser für Tests | `~/Library/Caches/ms-playwright`, `~/.cache/puppeteer`, `~/Library/Caches/Cypress`, `~/Library/Caches/electron` | S | `delete` |
 
 **Toolchains & SDKs**

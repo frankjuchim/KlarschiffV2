@@ -22,6 +22,31 @@ struct PathScannerTests {
         #expect(f.watchedApps.map(\.displayName).contains("Xcode"))
     }
 
+    @Test func xcodeArchivesBundledNewestFirstWithGermanDate() async throws {
+        let t = try FixtureTree()
+        let base = "home/Library/Developer/Xcode/Archives"
+        // Altes Archiv mit lesbarem CreationDate in Info.plist.
+        try t.file("\(base)/2025-01-10/Alt.xcarchive/Products/a", bytes: 3000)
+        let old = Date(timeIntervalSince1970: 1_736_500_000)   // 10. Jan. 2025
+        let plist = try PropertyListSerialization.data(fromPropertyList: ["CreationDate": old], format: .xml, options: 0)
+        try plist.write(to: t.root.appending(path: "\(base)/2025-01-10/Alt.xcarchive/Info.plist"))
+        // Neues Archiv ohne Info.plist: Änderungsdatum des Ordners.
+        try t.file("\(base)/2026-10-01/Neu.xcarchive/Products/a", bytes: 2000)
+        try t.setModified("\(base)/2026-10-01/Neu.xcarchive", daysAgo: 3)
+
+        let fs = try await PathScanner(rule: Catalog.rule("xcode.archives")).scan(.test(root: t.root))
+        #expect(fs.count == 1)
+        let f = try #require(fs.first)
+        #expect(f.id.key == "all")
+        #expect(f.items.map(\.name) == ["Neu.xcarchive", "Alt.xcarchive"])
+        #expect(f.items[1].date == old)
+        #expect(f.items[1].detail == GermanDate.string(old))
+        #expect(f.items[1].detail?.contains("2025") == true)
+        #expect(f.items[0].detail == f.items[0].date.map(GermanDate.string))
+        #expect(f.items[0].date != nil)
+        #expect(f.size == f.items.compactMap(\.size).reduce(0, +))
+    }
+
     @Test func missingPathsYieldNothing() async throws {
         #expect(try await PathScanner(rule: Catalog.rule("languages.gradle")).scan(.test(root: FixtureTree().root)).isEmpty)
     }
