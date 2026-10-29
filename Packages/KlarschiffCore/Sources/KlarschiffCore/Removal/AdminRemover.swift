@@ -100,7 +100,7 @@ public struct AdminRemover: Sendable {
 
     private static let snapshotDate = try! NSRegularExpression(pattern: #"\A[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{6}\z"#)
 
-    /// Allow-List: nur `/bin/rm` (jeder Operand geprüft) und `tmutil deletelocalsnapshots <Datum>`.
+    /// Allow-List: nur `/bin/rm` (jeder Operand geprüft), `tmutil deletelocalsnapshots <Datum>` und `log erase --all`.
     private func verdict(for step: AdminStep) -> SafetyVerdict {
         switch step.executable {
         case "/bin/rm": return rmVerdict(step.arguments)
@@ -110,6 +110,8 @@ public struct AdminRemover: Sendable {
                 return .allowed
             }
             return .denied("Unbekanntes Admin-Werkzeug")
+        case "/usr/bin/log":
+            return step.arguments == ["erase", "--all"] ? .allowed : .denied("Unbekanntes Admin-Werkzeug")
         default: return .denied("Unbekanntes Admin-Werkzeug")
         }
     }

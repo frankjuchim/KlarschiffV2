@@ -186,6 +186,29 @@ private func item(_ id: String, _ url: URL?, size: Int64? = 10) -> FindingItem {
         #expect(ex.runs.count == 1)
     }
 
+    @Test func adminAllowsLogEraseAll() async throws {
+        let tree = try FixtureTree()
+        let (g, _) = makeGuard(tree)
+        let step = AdminStep(executable: "/usr/bin/log", arguments: ["erase", "--all"])
+        let ex = FakeExecutor(fixed: .completed([0]))
+        let fnd = finding(.admin([step]), items: [item("a", nil)])
+        _ = await AdminRemover(executor: ex, guard: g).remove([(fnd, fnd.items)], dryRun: false)
+        #expect(ex.runs == [[step]])
+    }
+
+    @Test(arguments: [["erase"], ["show"], ["erase", "--all", "x"], ["--all", "erase"], ["erase", "--ttl", "1"], []])
+    func adminDeniesOtherLogCommands(_ args: [String]) async throws {
+        let tree = try FixtureTree()
+        let (g, _) = makeGuard(tree)
+        for exe in ["/usr/bin/log", "log", "/usr/bin/LOG"] where !(exe == "/usr/bin/log" && args == ["erase", "--all"]) {
+            let ex = FakeExecutor(fixed: .completed([0]))
+            let fnd = finding(.admin([AdminStep(executable: exe, arguments: args)]), items: [item("a", nil)])
+            let r = await AdminRemover(executor: ex, guard: g).remove([(fnd, fnd.items)], dryRun: false)
+            #expect(ex.runs.isEmpty)
+            #expect(r[0].outcome == .failed("Gesperrt: Unbekanntes Admin-Werkzeug"))
+        }
+    }
+
     @Test func adminAllowListDeniesUnknownTools() async throws {
         let tree = try FixtureTree()
         let (g, _) = makeGuard(tree)

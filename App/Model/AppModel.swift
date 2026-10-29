@@ -191,6 +191,7 @@ final class AppModel {
         case "brew": return .homebrew
         case "languages": return .languages
         case "toolchains": return .toolchains
+        case "systemData": return .systemData
         default: return nil
         }
     }

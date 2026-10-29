@@ -34,3 +34,10 @@ import Foundation
   #expect(AppTab.storage.symbol == "internaldrive")
   #expect(Finding.sample(category: .simulators).tab == .developer)
 }
+
+@Test func systemDataCategory() {
+  #expect(Category.systemData.tab == .systemData)
+  #expect(Category.systemData.title == "Systemdaten")
+  #expect(Category.systemData.symbol == "chart.pie")
+  #expect(Category.allCases.last == .systemData)
+}

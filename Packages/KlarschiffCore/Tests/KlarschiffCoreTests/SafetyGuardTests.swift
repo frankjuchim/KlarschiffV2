@@ -8,7 +8,53 @@ private let guardUnderTest = SafetyGuard(
     allowedCacheSubdirs: SafetyGuard.defaultAllowedCacheSubdirs
 )
 
+private let guardWithTemp = SafetyGuard(
+    home: URL(filePath: "/Users/test"),
+    userCacheDir: URL(filePath: "/private/var/folders/ab/xyz/C"),
+    allowedCacheSubdirs: SafetyGuard.defaultAllowedCacheSubdirs,
+    userTempDir: URL(filePath: "/private/var/folders/ab/xyz/T")
+)
+
 @Suite struct SafetyGuardTests {
+    @Test(arguments: ["/Library/Caches/com.example.app", "/Library/Logs/DiagnosticReports/x.ips",
+                      "/private/var/folders/ab/xyz/T/old.tmp", "/var/folders/ab/xyz/T/old.tmp",
+                      "/library/caches/Com.Example", "/Library/Caches/a/../b"])
+    func allowsSystemDataTargets(_ p: String) { #expect(guardWithTemp.check(URL(filePath: p)) == .allowed, "\(p)") }
+
+    @Test(arguments: ["/Library/Caches", "/Library/Logs", "/Library/Caches/..", "/Library/Caches/../Preferences/x",
+                      "/Library/Caches/.", "/LIBRARY/CACHES", "/private/var/folders/ab/xyz/T",
+                      "/private/var/folders/ab/xyz/T/..", "/private/var/folders/ab/xyz/T/../C/x",
+                      "/private/var/folders/cd/other/T/x", "/private/var/db/diagnostics", "/Library/Preferences/x",
+                      "/Library", "/Library/Caches/Caskroom/x",
+                      "/System/Volumes/Data/System/Library/AssetsV2/x"])
+    func deniesOtherSystemPaths(_ p: String) { #expect(guardWithTemp.check(URL(filePath: p)) != .allowed, "\(p)") }
+
+    @Test func tempAndLibraryNotAllowedWithoutTempDir() {
+        #expect(guardUnderTest.check(URL(filePath: "/private/var/folders/ab/xyz/T/old.tmp")) != .allowed)
+    }
+
+    @Test(arguments: ["/Users/test", "/private/var/folders/ab/xyz", "/var/empty/x", "/Library/T", "/private/var/folders/ab/xyz/C"])
+    func invalidTempDirIsIgnored(_ t: String) {
+        let g = SafetyGuard(home: URL(filePath: "/Users/test"), userCacheDir: URL(filePath: "/private/var/folders/ab/xyz/C"),
+                            allowedCacheSubdirs: [], userTempDir: URL(filePath: t))
+        // Ungültiger Temp-Ordner gibt nichts frei (Home-Pfade außen vor).
+        if !t.hasPrefix("/Users/test") { #expect(g.check(URL(filePath: "\(t)/x")) != .allowed, "\(t)") }
+    }
+
+    @Test func deniesSymlinkFromTempToDocuments() throws {
+        let t = try FixtureTree()
+        let docs = try t.dir("home/Documents")
+        try t.file("home/Documents/secret.txt", bytes: 3)
+        try t.symlink("evil", to: docs)
+        // Fixture liegt selbst unter dem echten T/; dort das eigene T/ simulieren.
+        guard let temp = SafetyGuard.userTempDirectory() else { return }
+        let g = SafetyGuard(home: t.root.appending(path: "home"), userCacheDir: t.root.appending(path: "C"),
+                            allowedCacheSubdirs: [], userTempDir: temp)
+        #expect(g.check(t.root.appending(path: "evil")) != .allowed)
+        #expect(g.check(t.root.appending(path: "evil/secret.txt")) != .allowed)
+        #expect(g.check(t.root.appending(path: "evil/../evil/secret.txt")) != .allowed)
+    }
+
     @Test(arguments: [
         "/", "/System/Library", "/usr/bin", "/bin/ls", "/sbin", "/private/var/folders/ab/xyz/C",
         "/private/var/folders/ab/xyz/T/foo", "/private/var/folders/ab/xyz/C/com.apple.Safari",

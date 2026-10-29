@@ -48,6 +48,7 @@ struct CatalogTests {
         case .homebrew: "homebrew"
         case .languages: "languages"
         case .toolchains: "toolchains"
+        case .systemData: "systemData"
         }
     }
 

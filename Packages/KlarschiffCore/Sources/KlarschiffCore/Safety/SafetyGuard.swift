@@ -15,6 +15,7 @@ public struct SafetyGuard: Sendable {
 
     private let homeParts: [String]
     private let cacheParts: [String]?
+    private let tempParts: [String]?
     private let allowedCache: Set<String>
     private let isValid: Bool
 
@@ -42,7 +43,7 @@ public struct SafetyGuard: Sendable {
         ["library", "keychains"], ["documents"], ["desktop"],
     ]
 
-    public init(home: URL, userCacheDir: URL, allowedCacheSubdirs: Set<String>) {
+    public init(home: URL, userCacheDir: URL, allowedCacheSubdirs: Set<String>, userTempDir: URL? = nil) {
         allowedCache = Set(allowedCacheSubdirs.map { $0.lowercased() })
         let h = Self.canonicalPhysical(home.path)?.map { $0.lowercased() }
         // Home muss unter /Users/<name> oder /private/var/<...> liegen; sonst ist die Konfiguration ungültig.
@@ -61,6 +62,14 @@ public struct SafetyGuard: Sendable {
         } else {
             cacheParts = nil
         }
+        // Temp-Ordner (`DARWIN_USER_TEMP_DIR`) gleich validiert; darf nicht der Cache-Ordner sein.
+        if let userTempDir,
+           let t = Self.canonicalPhysical(userTempDir.path)?.map({ $0.lowercased() }),
+           t.count >= 6, t[0] == "private", t[1] == "var", t[2] == "folders", t != cacheParts {
+            tempParts = t
+        } else {
+            tempParts = nil
+        }
     }
 
     /// Ersatz, wenn `DARWIN_USER_CACHE_DIR` nicht ermittelbar ist (liegt nie unter /private/var/folders → keine Cache-Freigaben).
@@ -76,10 +85,20 @@ public struct SafetyGuard: Sendable {
         return text.isEmpty ? nil : URL(filePath: text)
     }
 
+    /// `DARWIN_USER_TEMP_DIR` per `confstr`; `nil`, wenn nicht ermittelbar.
+    public static func userTempDirectory() -> URL? {
+        var buf = [CChar](repeating: 0, count: Int(PATH_MAX) + 1)
+        let n = confstr(_CS_DARWIN_USER_TEMP_DIR, &buf, buf.count)
+        guard n > 0 else { return nil }
+        let text = String(decoding: buf.prefix { $0 != 0 }.map(UInt8.init(bitPattern:)), as: UTF8.self)
+        return text.isEmpty ? nil : URL(filePath: text)
+    }
+
     /// Produktiv-Variante: `DARWIN_USER_CACHE_DIR` per `userCacheDirectory()`.
     public static func production(home: URL = URL(filePath: NSHomeDirectory())) -> SafetyGuard {
         let cache = userCacheDirectory() ?? missingUserCacheDirectory
-        return SafetyGuard(home: home, userCacheDir: cache, allowedCacheSubdirs: defaultAllowedCacheSubdirs)
+        return SafetyGuard(home: home, userCacheDir: cache, allowedCacheSubdirs: defaultAllowedCacheSubdirs,
+                           userTempDir: userTempDirectory())
     }
 
     public func check(_ url: URL) -> SafetyVerdict {
@@ -121,6 +140,13 @@ public struct SafetyGuard: Sendable {
             if let first = rel.first, allowedCache.contains(first) { return .allowed }
             return .denied(Self.reasonSystem)
         }
+
+        if let tempParts, let rel = Self.relative(p, to: tempParts) {
+            return rel.isEmpty ? .denied(Self.reasonSystem) : .allowed
+        }
+
+        // Kinder von /Library/Caches und /Library/Logs (nie die Ordner selbst).
+        if p.count >= 3, p[0] == "library", p[1] == "caches" || p[1] == "logs" { return .allowed }
 
         for root in Self.absoluteRoots where Self.hasPrefix(p, root) { return .allowed }
 
