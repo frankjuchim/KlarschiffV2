@@ -30,10 +30,14 @@ public struct ToolCommand: Hashable, Codable, Sendable {
 public struct AdminStep: Hashable, Codable, Sendable {
     public var executable: String
     public var arguments: [String]
+    /// Optional: Item, zu dem der Schritt gehört. Tragen alle Schritte eines Funds eine ID, darf ein Item mehrere
+    /// Schritte haben; ein gesperrter Schritt sperrt dann alle Schritte dieses Items.
+    public var itemID: String?
 
-    public init(executable: String, arguments: [String]) {
+    public init(executable: String, arguments: [String], itemID: String? = nil) {
         self.executable = executable
         self.arguments = arguments
+        self.itemID = itemID
     }
 }
 

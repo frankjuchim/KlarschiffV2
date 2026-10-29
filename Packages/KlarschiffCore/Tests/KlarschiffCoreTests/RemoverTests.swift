@@ -287,6 +287,152 @@ private func item(_ id: String, _ url: URL?, size: Int64? = 10) -> FindingItem {
         #expect(r.count == 1 && r[0].itemID == "B" && r[0].outcome == .failed("Exit 3"))
     }
 
+    // MARK: Admin – Hintergrunddienste
+
+    private func lc(_ args: String...) -> AdminStep { AdminStep(executable: "/bin/launchctl", arguments: args) }
+
+    private func runsAllowed(_ step: AdminStep, _ g: SafetyGuard) async -> (Bool, ItemOutcome) {
+        let ex = FakeExecutor(fixed: .completed([0]))
+        let fnd = finding(.admin([step]), items: [item("a", nil)])
+        let r = await AdminRemover(executor: ex, guard: g).remove([(fnd, fnd.items)], dryRun: false)
+        return (!ex.runs.isEmpty, r[0].outcome)
+    }
+
+    @Test(arguments: [["bootout", "system/com.example.daemon"], ["bootout", "system/A"],
+                      ["bootout", "system/0x_y-z.1"], ["bootout", "system/" + String(repeating: "a", count: 201)]])
+    func adminAllowsLaunchctlBootoutSystem(_ args: [String]) async throws {
+        let tree = try FixtureTree()
+        let (g, _) = makeGuard(tree)
+        #expect(await runsAllowed(AdminStep(executable: "/bin/launchctl", arguments: args), g).0, "\(args)")
+    }
+
+    @Test(arguments: [
+        ["bootout", "gui/501/com.example.x"], ["bootout", "user/501/com.example.x"], ["bootout", "system"],
+        ["bootout", "system/"], ["bootout", "system/com.apple.x"], ["bootout", "system/COM.APPLE.x"],
+        ["bootout", "system/Com.Apple.Foo"], ["bootout", "system/com.example x"], ["bootout", "system/com.example;rm"],
+        ["bootout", "system/com.example/x"], ["bootout", "system/.hidden"], ["bootout", "system/-x"],
+        ["bootout", "system/_x"], ["bootout", "system/com.exämple"], ["bootout", "system/com.example\u{301}"],
+        ["bootout", "system/com.ｅxample"], ["bootout", "system/com.example\n"], ["bootout", "system/com.example\0"],
+        ["bootout", "system/" + String(repeating: "a", count: 202)], ["bootout", "system/com.example", "x"],
+        ["bootout"], [], ["bootstrap", "system/com.example"], ["remove", "com.example"], ["unload", "/Library/LaunchDaemons/x.plist"],
+        ["kill", "9", "system/com.example"], ["BOOTOUT", "system/com.example"], ["bootout", "SYSTEM/com.example"],
+        ["bootout", " system/com.example"], ["bootout", "system/de.frankjuchim.klarschiff2.check"],
+    ])
+    func adminDeniesOtherLaunchctl(_ args: [String]) async throws {
+        let tree = try FixtureTree()
+        let (g, _) = makeGuard(tree)
+        let (ran, outcome) = await runsAllowed(AdminStep(executable: "/bin/launchctl", arguments: args), g)
+        #expect(!ran, "\(args)")
+        guard case .failed(let m) = outcome else { Issue.record("expected failed"); return }
+        #expect(m.hasPrefix("Gesperrt: "))
+    }
+
+    @Test func adminDeniesLaunchctlAtOtherPaths() async throws {
+        let tree = try FixtureTree()
+        let (g, _) = makeGuard(tree)
+        for exe in ["launchctl", "/usr/bin/launchctl", "/bin//launchctl", "/BIN/launchctl"] {
+            #expect(!(await runsAllowed(AdminStep(executable: exe, arguments: ["bootout", "system/com.example"]), g).0), "\(exe)")
+        }
+    }
+
+    @Test(arguments: ["/Library/LaunchDaemons/x.plist", "/Library/LaunchAgents/com.example.agent.plist",
+                      "/library/launchdaemons/X.PLIST"])
+    func adminAllowsRmFOnLaunchPlist(_ p: String) async throws {
+        let tree = try FixtureTree()
+        let (g, _) = makeGuard(tree)
+        #expect(await runsAllowed(rm("-f", p), g).0, "\(p)")
+    }
+
+    @Test(arguments: [
+        ["-rf", "/Library/LaunchDaemons/x.plist"], ["-r", "/Library/LaunchDaemons/x.plist"],
+        ["-fr", "/Library/LaunchAgents/x.plist"], ["-Rf", "/Library/LaunchAgents/x.plist"],
+        ["/Library/LaunchDaemons/x.plist"], ["-f", "--", "/Library/LaunchDaemons/x.plist"],
+        ["-f", "-f", "/Library/LaunchDaemons/x.plist"],
+        ["-f", "/Library/LaunchDaemons/x.plist", "/Library/LaunchDaemons/y.plist"],
+        ["-f", "/Library/LaunchDaemons"], ["-f", "/Library/LaunchAgents"], ["-rf", "/Library/LaunchDaemons"],
+        ["-f", "/Library/LaunchDaemons/"], ["-f", "/Library/LaunchDaemons/x.plist/"],
+        ["-f", "/Library/LaunchDaemons/sub/x.plist"], ["-f", "/Library/LaunchDaemons/x.txt"],
+        ["-f", "/Library/LaunchDaemons/x"], ["-f", "/Library/LaunchDaemons/.plist"],
+        ["-f", "/Library/LaunchDaemons/x.plist\u{301}"], ["-f", "/Library/LaunchDaemons/../LaunchDaemons/x.plist"],
+        ["-f", "/Library/LaunchDaemons/./x.plist"], ["-f", "//Library/LaunchDaemons/x.plist"],
+        ["-f", "/Library//LaunchDaemons/x.plist"], ["-f", "/System/Library/LaunchDaemons/x.plist"],
+        ["-f", "/Library/LaunchAgents/x.plist", "/usr/local/texlive/2022"],
+        ["-rf", "/usr/local/texlive/2022", "/Library/LaunchAgents/x.plist"],
+    ])
+    func adminDeniesOtherRmOnLaunchFolders(_ args: [String]) async throws {
+        let tree = try FixtureTree()
+        let (g, _) = makeGuard(tree)
+        let (ran, outcome) = await runsAllowed(AdminStep(executable: "/bin/rm", arguments: args), g)
+        #expect(!ran, "\(args)")
+        guard case .failed(let m) = outcome else { Issue.record("expected failed"); return }
+        #expect(m.hasPrefix("Gesperrt: "))
+    }
+
+    @Test func adminItemGroupedStepsRunOnlyForSelectedItems() async throws {
+        let tree = try FixtureTree()
+        let (g, _) = makeGuard(tree)
+        let ex = FakeExecutor(fixed: .completed([0, 0]))
+        let a = AdminStep(executable: "/bin/rm", arguments: ["-f", "/Library/LaunchAgents/a.plist"], itemID: "A")
+        let b0 = AdminStep(executable: "/bin/launchctl", arguments: ["bootout", "system/b"], itemID: "B")
+        let b1 = AdminStep(executable: "/bin/rm", arguments: ["-f", "/Library/LaunchDaemons/b.plist"], itemID: "B")
+        let fnd = finding(.admin([a, b0, b1]), items: [item("A", nil), item("B", nil)])
+        let r = await AdminRemover(executor: ex, guard: g).remove([(fnd, [fnd.items[1]])], dryRun: false)
+        #expect(ex.runs == [[b0, b1]])
+        #expect(r.map(\.itemID) == ["B"])
+        #expect(r[0].outcome == .removed(freed: 10))
+    }
+
+    @Test func adminItemGroupDeniedStepBlocksWholeItemOnly() async throws {
+        let tree = try FixtureTree()
+        let (g, _) = makeGuard(tree)
+        let ex = FakeExecutor(fixed: .completed([0]))
+        let a = AdminStep(executable: "/bin/rm", arguments: ["-f", "/Library/LaunchAgents/a.plist"], itemID: "A")
+        let b0 = AdminStep(executable: "/bin/launchctl", arguments: ["bootout", "system/com.apple.b"], itemID: "B")
+        let b1 = AdminStep(executable: "/bin/rm", arguments: ["-f", "/Library/LaunchDaemons/b.plist"], itemID: "B")
+        let fnd = finding(.admin([a, b0, b1]), items: [item("A", nil), item("B", nil)])
+        let r = await AdminRemover(executor: ex, guard: g).remove([(fnd, fnd.items)], dryRun: false)
+        #expect(ex.runs == [[a]])
+        #expect(r[0].outcome == .removed(freed: 10))
+        guard case .failed(let m) = r[1].outcome else { Issue.record("expected failed"); return }
+        #expect(m.hasPrefix("Gesperrt: "))
+    }
+
+    @Test func adminItemGroupBootoutNotLoadedCountsAsDone() async throws {
+        let tree = try FixtureTree()
+        let (g, _) = makeGuard(tree)
+        let b0 = AdminStep(executable: "/bin/launchctl", arguments: ["bootout", "system/b"], itemID: "B")
+        let b1 = AdminStep(executable: "/bin/rm", arguments: ["-f", "/Library/LaunchDaemons/b.plist"], itemID: "B")
+        let fnd = finding(.admin([b0, b1]), items: [item("B", nil)])
+        for (codes, ok) in [([Int32(113), 0], true), ([3, 0], true), ([5, 0], false), ([113, 1], false), ([0, 113], false)] {
+            let ex = FakeExecutor(fixed: .completed(codes))
+            let r = await AdminRemover(executor: ex, guard: g).remove([(fnd, fnd.items)], dryRun: false)
+            #expect((r[0].outcome == .removed(freed: 10)) == ok, "\(codes)")
+        }
+    }
+
+    @Test func adminMixedItemIDsRejected() async throws {
+        let tree = try FixtureTree()
+        let (g, _) = makeGuard(tree)
+        let ex = FakeExecutor(fixed: .completed([0, 0]))
+        let a = AdminStep(executable: "/bin/rm", arguments: ["-f", "/Library/LaunchAgents/a.plist"], itemID: "A")
+        let b = AdminStep(executable: "/bin/rm", arguments: ["-f", "/Library/LaunchAgents/b.plist"])
+        let fnd = finding(.admin([a, b]), items: [item("A", nil), item("B", nil)])
+        let r = await AdminRemover(executor: ex, guard: g).remove([(fnd, fnd.items)], dryRun: false)
+        #expect(ex.runs.isEmpty)
+        #expect(r.allSatisfy { if case .failed = $0.outcome { true } else { false } })
+    }
+
+    @Test func adminItemGroupUnknownOrStepless() async throws {
+        let tree = try FixtureTree()
+        let (g, _) = makeGuard(tree)
+        let ex = FakeExecutor(fixed: .completed([0]))
+        let a = AdminStep(executable: "/bin/rm", arguments: ["-f", "/Library/LaunchAgents/a.plist"], itemID: "A")
+        let fnd = finding(.admin([a]), items: [item("A", nil), item("B", nil)])
+        let r = await AdminRemover(executor: ex, guard: g).remove([(fnd, [item("B", nil), item("X", nil)])], dryRun: false)
+        #expect(ex.runs.isEmpty)
+        #expect(r.allSatisfy { if case .failed = $0.outcome { true } else { false } })
+    }
+
     @Test func adminDryRunAndMissingMarker() async throws {
         let tree = try FixtureTree()
         let (g, _) = makeGuard(tree)

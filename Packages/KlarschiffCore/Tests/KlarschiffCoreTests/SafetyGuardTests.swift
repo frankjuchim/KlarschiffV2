@@ -29,6 +29,28 @@ private let guardWithTemp = SafetyGuard(
                       "/System/Volumes/Data/System/Library/AssetsV2/x"])
     func deniesOtherSystemPaths(_ p: String) { #expect(guardWithTemp.check(URL(filePath: p)) != .allowed, "\(p)") }
 
+    @Test(arguments: ["/Library/LaunchDaemons/x.plist", "/Library/LaunchAgents/com.example.agent.plist",
+                      "/library/launchdaemons/X.PLIST", "/Library/LaunchDaemons/a/../x.plist"])
+    func allowsLaunchPlists(_ p: String) { #expect(guardUnderTest.check(URL(filePath: p)) == .allowed, "\(p)") }
+
+    @Test(arguments: ["/Library/LaunchDaemons", "/Library/LaunchAgents", "/LIBRARY/LAUNCHDAEMONS",
+                      "/Library/LaunchDaemons/sub/x.plist", "/Library/LaunchAgents/sub/x.plist",
+                      "/Library/LaunchDaemons/x.txt", "/Library/LaunchDaemons/x", "/Library/LaunchDaemons/.plist",
+                      "/Library/LaunchDaemons/x.plist/y",
+                      "/Library/LaunchDaemons/..", "/Library/LaunchDaemons/../x.plist",
+                      "/Library/LaunchDaemons/x.plist\u{301}", "/Library/LaunchDaemons/x.plistx",
+                      "/System/Library/LaunchDaemons/x.plist", "/Library/Apple/System/Library/LaunchDaemons/x.plist",
+                      "/Library/LaunchDaemonsX/x.plist", "/private/Library/LaunchDaemons/x.plist"])
+    func deniesOtherLaunchPaths(_ p: String) { #expect(guardUnderTest.check(URL(filePath: p)) != .allowed, "\(p)") }
+
+    @Test func deniesSymlinkIntoLaunchDaemons() throws {
+        // Lexikalisch außerhalb, aufgelöst unter /Library/LaunchDaemons: beide Formen müssen erlaubt sein.
+        let t = try FixtureTree()
+        try t.symlink("link.plist", to: URL(filePath: "/Library/LaunchDaemons/x.plist"))
+        let g = SafetyGuard(home: t.root.appending(path: "home"), userCacheDir: t.root.appending(path: "C"), allowedCacheSubdirs: [])
+        #expect(g.check(t.root.appending(path: "link.plist")) != .allowed)
+    }
+
     @Test func tempNotAllowedWithoutTempDir() {
         #expect(guardUnderTest.check(URL(filePath: "/private/var/folders/ab/xyz/T/old.tmp")) != .allowed)
     }

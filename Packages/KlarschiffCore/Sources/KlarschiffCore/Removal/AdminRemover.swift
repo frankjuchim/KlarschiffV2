@@ -21,6 +21,7 @@ public struct AdminRemover: Sendable {
     public func remove(_ batch: [(Finding, [FindingItem])], dryRun: Bool) async -> [ItemResult] {
         var units: [Unit] = []
         var steps: [AdminStep] = []
+        var bootoutAt: [Bool] = []    // je Schritt: `launchctl bootout` („nicht geladen“ zählt als erledigt)
 
         for (finding, items) in batch {
             guard case .admin(let all) = finding.method else {
@@ -28,7 +29,23 @@ public struct AdminRemover: Sendable {
                 continue
             }
             var planned: [(items: [FindingItem], steps: [AdminStep], failure: String?)] = []
-            if !all.isEmpty, all.count == finding.items.count {
+            let tagged = all.filter { $0.itemID != nil }.count
+            if tagged > 0 {
+                // Schritte je Item (ein Item kann mehrere Schritte haben). Gemischt markierte Schritte: nichts ausführen.
+                let known = Set(finding.items.map(\.id))
+                for item in items {
+                    let mine = all.filter { $0.itemID == item.id }
+                    if tagged != all.count {
+                        planned.append(([item], [], "Ungültige Schritte"))
+                    } else if !known.contains(item.id) {
+                        planned.append(([item], [], "Unbekanntes Item"))
+                    } else if mine.isEmpty {
+                        planned.append(([item], [], "Nichts auszuführen"))
+                    } else {
+                        planned.append(([item], mine, nil))
+                    }
+                }
+            } else if !all.isEmpty, all.count == finding.items.count {
                 for item in items {
                     guard let idx = finding.items.firstIndex(where: { $0.id == item.id }) else {
                         planned.append(([item], [], "Unbekanntes Item")); continue
@@ -41,11 +58,13 @@ public struct AdminRemover: Sendable {
             for p in planned {
                 var unit = Unit(findingID: finding.id, items: p.items, failure: p.failure)
                 var keep: [AdminStep] = []
+                var tolerant: [Bool] = []
                 for step in p.steps {
                     if case .denied(let reason) = verdict(for: step) {
                         unit.failure = unit.failure ?? RemovalText.denied(reason)
                     } else {
                         keep.append(step)
+                        tolerant.append(Self.isBootout(step))
                     }
                 }
                 if unit.failure != nil { keep = [] } // ein gesperrter Schritt: nichts der Einheit ausführen
@@ -53,6 +72,7 @@ public struct AdminRemover: Sendable {
                     unit.start = steps.count
                     unit.count = keep.count
                     steps += keep
+                    bootoutAt += tolerant
                 }
                 units.append(unit)
             }
@@ -75,7 +95,12 @@ public struct AdminRemover: Sendable {
                 case .cancelled: outcome = .cancelled
                 case .failed(let msg): outcome = .failed(msg)
                 case .completed(let codes):
-                    let mine = (unit.start..<unit.start + unit.count).map { codes.indices.contains($0) ? codes[$0] : -1 }
+                    let mine = (unit.start..<unit.start + unit.count).map { i -> Int32 in
+                        guard codes.indices.contains(i) else { return -1 }
+                        // launchctl bootout: 3 (No such process) / 113 (Could not find service) = Dienst war nicht geladen.
+                        if bootoutAt[i], Self.bootoutNotLoadedCodes.contains(codes[i]) { return 0 }
+                        return codes[i]
+                    }
                     if mine.allSatisfy({ $0 == 0 }) {
                         outcome = .removed(freed: nil) // wird je Item unten mit Größe ersetzt
                     } else if mine.contains(-1) {
@@ -100,10 +125,24 @@ public struct AdminRemover: Sendable {
 
     private static let snapshotDate = try! NSRegularExpression(pattern: #"\A[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{6}\z"#)
 
-    /// Allow-List: nur `/bin/rm` (jeder Operand geprüft), `tmutil deletelocalsnapshots <Datum>` und `log erase --all`.
+    private static let bootoutNotLoadedCodes: Set<Int32> = [3, 113]
+
+    private static func isBootout(_ step: AdminStep) -> Bool {
+        step.executable == "/bin/launchctl" && step.arguments.first == "bootout"
+    }
+
+    /// Allow-List: nur `/bin/rm` (jeder Operand geprüft), `tmutil deletelocalsnapshots <Datum>`, `log erase --all`
+    /// und `launchctl bootout system/<label>`.
     private func verdict(for step: AdminStep) -> SafetyVerdict {
         switch step.executable {
         case "/bin/rm": return rmVerdict(step.arguments)
+        case "/bin/launchctl":
+            guard step.arguments.count == 2, step.arguments[0] == "bootout",
+                  step.arguments[1].unicodeScalars.starts(with: "system/".unicodeScalars) else {
+                return .denied("Unbekanntes Admin-Werkzeug")
+            }
+            let label = String(String.UnicodeScalarView(step.arguments[1].unicodeScalars.dropFirst("system/".unicodeScalars.count)))
+            return Self.isRemovableServiceLabel(label) ? .allowed : .denied("Ungültiges Dienst-Label")
         case "/usr/bin/tmutil":
             if step.arguments.count == 2, step.arguments[0] == "deletelocalsnapshots",
                Self.snapshotDate.firstMatch(in: step.arguments[1], range: NSRange(step.arguments[1].startIndex..., in: step.arguments[1])) != nil {
@@ -120,6 +159,20 @@ public struct AdminRemover: Sendable {
         guard p.hasPrefix("/"), p.count > 1, !p.hasSuffix("/") else { return false }
         return !p.unicodeScalars.split(separator: "/", omittingEmptySubsequences: false).dropFirst()
             .contains { $0.isEmpty || String($0) == "." || String($0) == ".." }
+    }
+
+    /// `^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$` auf Unicode-Skalaren (nur ASCII), nicht `com.apple.*`, nicht Klarschiff 2 selbst.
+    static func isRemovableServiceLabel(_ label: String) -> Bool {
+        let scalars = Array(label.unicodeScalars)
+        guard (1...201).contains(scalars.count) else { return false }
+        func alnum(_ s: Unicode.Scalar) -> Bool {
+            ("a"..."z").contains(s) || ("A"..."Z").contains(s) || ("0"..."9").contains(s)
+        }
+        guard alnum(scalars[0]), scalars.dropFirst().allSatisfy({ alnum($0) || $0 == "." || $0 == "_" || $0 == "-" }) else {
+            return false
+        }
+        let lower = label.lowercased()
+        return !lower.hasPrefix("com.apple.") && !lower.hasPrefix(LaunchItemScanner.ownPrefix)
     }
 
     private static let knownRmOptions: Set<String> = ["-r", "-f", "-R", "-rf", "-fr", "-Rf", "-fR"]
@@ -144,6 +197,12 @@ public struct AdminRemover: Sendable {
             // /Library/Caches ist für alle beschreibbar: nur direkte Kinder (rm folgt Zwischen-Symlinks als root).
             let lower = arg.lowercased().unicodeScalars.split(separator: "/").map { String(String.UnicodeScalarView($0)) }
             if lower.count > 3, lower[0] == "library", lower[1] == "caches" { return .denied("Pfad nicht eindeutig") }
+            // /Library/LaunchAgents|LaunchDaemons: nur exakt `rm -f <direktes *.plist-Kind>`.
+            if lower.count >= 2, lower[0] == "library", SafetyGuard.launchDirs.contains(lower[1]) {
+                guard args.count == 2, args[0] == "-f", lower.count == 3, SafetyGuard.isPlistName(lower[2]) else {
+                    return .denied("Nur rm -f auf eine einzelne Dienst-Datei erlaubt")
+                }
+            }
             if case .denied(let r) = safety.check(URL(filePath: arg)) { return .denied(r) }
         }
         return targets == 0 ? .denied("Kein Ziel angegeben") : .allowed

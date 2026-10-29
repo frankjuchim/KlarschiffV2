@@ -148,6 +148,9 @@ public struct SafetyGuard: Sendable {
         // Kinder von /Library/Caches und /Library/Logs (nie die Ordner selbst).
         if p.count >= 3, p[0] == "library", p[1] == "caches" || p[1] == "logs" { return .allowed }
 
+        // Direkte `*.plist`-Kinder von /Library/LaunchAgents und /Library/LaunchDaemons (nie die Ordner, keine Unterordner).
+        if p.count == 3, p[0] == "library", Self.launchDirs.contains(p[1]), Self.isPlistName(p[2]) { return .allowed }
+
         for root in Self.absoluteRoots where Self.hasPrefix(p, root) { return .allowed }
 
         if p.count >= 2, p[0] == "applications", p[1].count > 4, p[1].hasSuffix(".app") { return .allowed }
@@ -172,6 +175,15 @@ public struct SafetyGuard: Sendable {
             for comp in rel.dropFirst() where Self.matchesCredential(comp) { return .denied(Self.reasonCreds) }
         }
         return .allowed
+    }
+
+    static let launchDirs: Set<String> = ["launchagents", "launchdaemons"]
+
+    /// `<name>.plist` mit nicht-leerem Namen; Vergleich auf Unicode-Skalaren (ein Combining Mark nach `.plist` zählt nicht).
+    static func isPlistName(_ lowercasedName: String) -> Bool {
+        let scalars = Array(lowercasedName.unicodeScalars)
+        let suffix = Array(".plist".unicodeScalars)
+        return scalars.count > suffix.count && Array(scalars.suffix(suffix.count)) == suffix
     }
 
     private static func matchesCredential(_ name: String) -> Bool {

@@ -28,12 +28,14 @@ public enum Category: String, CaseIterable, Sendable {
     case system, aiLeftovers, appCaches, personalData, apps
     case xcode, simulators, homebrew, languages, toolchains
     case systemData
+    case services
 
     public var tab: AppTab {
         switch self {
         case .system, .aiLeftovers, .appCaches, .personalData, .apps: .storage
         case .xcode, .simulators, .homebrew, .languages, .toolchains: .developer
         case .systemData: .systemData
+        case .services: .services
         }
     }
 
@@ -50,6 +52,7 @@ public enum Category: String, CaseIterable, Sendable {
         case .languages: "Sprachen & Paketmanager"
         case .toolchains: "Toolchains & SDKs"
         case .systemData: "Systemdaten"
+        case .services: "Hintergrunddienste"
         }
     }
 
@@ -66,6 +69,7 @@ public enum Category: String, CaseIterable, Sendable {
         case .languages: "shippingbox"
         case .toolchains: "wrench.and.screwdriver"
         case .systemData: "chart.pie"
+        case .services: "gearshape.2"
         }
     }
 
@@ -91,6 +95,7 @@ extension Category {
         case "languages": return .languages
         case "toolchains": return .toolchains
         case "sysdata", "systemdata": return .systemData
+        case "services": return .services
         default: return nil
         }
     }

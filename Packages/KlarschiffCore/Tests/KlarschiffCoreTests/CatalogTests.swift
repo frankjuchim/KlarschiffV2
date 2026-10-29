@@ -49,6 +49,7 @@ struct CatalogTests {
         case .languages: "languages"
         case .toolchains: "toolchains"
         case .systemData: "systemData"
+        case .services: "services"
         }
     }
 

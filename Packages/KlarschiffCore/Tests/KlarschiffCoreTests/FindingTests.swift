@@ -39,5 +39,12 @@ import Foundation
   #expect(Category.systemData.tab == .systemData)
   #expect(Category.systemData.title == "Systemdaten")
   #expect(Category.systemData.symbol == "chart.pie")
-  #expect(Category.allCases.last == .systemData)
+}
+
+@Test func servicesCategory() {
+  #expect(Category.services.tab == .services)
+  #expect(Category.services.title == "Hintergrunddienste")
+  #expect(Category.services.symbol == "gearshape.2")
+  #expect(Category.allCases.last == .services)
+  #expect(Category.forScannerID("services.orphaned") == .services)
 }
