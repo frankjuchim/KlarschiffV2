@@ -6,11 +6,20 @@ public enum AdminScriptBuilder {
         UUID().uuidString.replacingOccurrences(of: "-", with: "")
     }
 
+    /// Exit-Code eines übersprungenen bedingten Schritts.
+    public static let skippedCode: Int32 = 125
+
     /// Je Schritt eine Zeile; kein `set -e`, damit alle Schritte laufen. Alles über `ShellQuote.quote`.
+    /// Bedingte Schritte (`runsIfPreviousSucceeded`) laufen nur nach Erfolg des vorherigen Schritts
+    /// (nach `launchctl bootout` auch 3/113), sonst Exit `skippedCode`.
     public static func script(for steps: [AdminStep], nonce: String) -> String {
         steps.enumerated().map { i, step in
             let cmd = ([step.executable] + step.arguments).map(ShellQuote.quote).joined(separator: " ")
-            return "\(cmd); echo \"KS_STEP \(nonce) \(i) $?\""
+            let marker = "echo \"KS_STEP \(nonce) \(i) $ks_rc\""
+            guard step.runsIfPreviousSucceeded else { return "\(cmd); ks_rc=$?; \(marker)" }
+            let okCodes = i > 0 && steps[i - 1].isBootout
+                ? ([0] + AdminStep.bootoutNotLoadedCodes.sorted()).map(String.init).joined(separator: "|") : "0"
+            return "case \"$ks_rc\" in \(okCodes)) \(cmd); ks_rc=$?;; *) ks_rc=\(skippedCode);; esac; \(marker)"
         }.joined(separator: "\n")
     }
 

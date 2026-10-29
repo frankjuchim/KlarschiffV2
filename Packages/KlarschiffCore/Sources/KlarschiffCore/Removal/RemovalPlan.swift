@@ -90,13 +90,7 @@ public struct RemovalPlan: Sendable {
         }
         for (f, items) in adminSteps {
             guard case .admin(let steps) = f.method else { continue }
-            let mine: [AdminStep]
-            if steps.count == f.items.count {
-                let ids = Set(items.map(\.id))
-                mine = zip(f.items, steps).filter { ids.contains($0.0.id) }.map(\.1)
-            } else {
-                mine = steps
-            }
+            guard let mine = AdminStep.selectedSteps(steps, items: f.items, selected: items) else { continue }
             out += mine.map { "sudo " + ([$0.executable] + $0.arguments).map(ShellQuote.quote).joined(separator: " ") }
         }
         return out

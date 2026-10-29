@@ -28,43 +28,25 @@ public struct AdminRemover: Sendable {
                 units.append(Unit(findingID: finding.id, items: items, failure: "Falsche Methode"))
                 continue
             }
-            var planned: [(items: [FindingItem], steps: [AdminStep], failure: String?)] = []
-            let tagged = all.filter { $0.itemID != nil }.count
-            if tagged > 0 {
-                // Schritte je Item (ein Item kann mehrere Schritte haben). Gemischt markierte Schritte: nichts ausführen.
-                let known = Set(finding.items.map(\.id))
+            guard let planned = AdminStep.units(all, items: finding.items, selected: items) else {
                 for item in items {
-                    let mine = all.filter { $0.itemID == item.id }
-                    if tagged != all.count {
-                        planned.append(([item], [], "Ungültige Schritte"))
-                    } else if !known.contains(item.id) {
-                        planned.append(([item], [], "Unbekanntes Item"))
-                    } else if mine.isEmpty {
-                        planned.append(([item], [], "Nichts auszuführen"))
-                    } else {
-                        planned.append(([item], mine, nil))
-                    }
+                    units.append(Unit(findingID: finding.id, items: [item], failure: "Ungültige Schritte"))
                 }
-            } else if !all.isEmpty, all.count == finding.items.count {
-                for item in items {
-                    guard let idx = finding.items.firstIndex(where: { $0.id == item.id }) else {
-                        planned.append(([item], [], "Unbekanntes Item")); continue
-                    }
-                    planned.append(([item], [all[idx]], nil))
-                }
-            } else {
-                planned.append((items, all, nil))
+                continue
             }
             for p in planned {
                 var unit = Unit(findingID: finding.id, items: p.items, failure: p.failure)
                 var keep: [AdminStep] = []
                 var tolerant: [Bool] = []
-                for step in p.steps {
-                    if case .denied(let reason) = verdict(for: step) {
+                for (n, step) in p.steps.enumerated() {
+                    // Bedingter Schritt braucht einen vorherigen Schritt derselben Einheit.
+                    if step.runsIfPreviousSucceeded, n == 0 {
+                        unit.failure = unit.failure ?? "Ungültige Schritte"
+                    } else if case .denied(let reason) = verdict(for: step) {
                         unit.failure = unit.failure ?? RemovalText.denied(reason)
                     } else {
                         keep.append(step)
-                        tolerant.append(Self.isBootout(step))
+                        tolerant.append(step.isBootout)
                     }
                 }
                 if unit.failure != nil { keep = [] } // ein gesperrter Schritt: nichts der Einheit ausführen
@@ -98,7 +80,7 @@ public struct AdminRemover: Sendable {
                     let mine = (unit.start..<unit.start + unit.count).map { i -> Int32 in
                         guard codes.indices.contains(i) else { return -1 }
                         // launchctl bootout: 3 (No such process) / 113 (Could not find service) = Dienst war nicht geladen.
-                        if bootoutAt[i], Self.bootoutNotLoadedCodes.contains(codes[i]) { return 0 }
+                        if bootoutAt[i], AdminStep.bootoutNotLoadedCodes.contains(codes[i]) { return 0 }
                         return codes[i]
                     }
                     if mine.allSatisfy({ $0 == 0 }) {
@@ -124,12 +106,6 @@ public struct AdminRemover: Sendable {
     }
 
     private static let snapshotDate = try! NSRegularExpression(pattern: #"\A[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{6}\z"#)
-
-    private static let bootoutNotLoadedCodes: Set<Int32> = [3, 113]
-
-    private static func isBootout(_ step: AdminStep) -> Bool {
-        step.executable == "/bin/launchctl" && step.arguments.first == "bootout"
-    }
 
     /// Allow-List: nur `/bin/rm` (jeder Operand geprüft), `tmutil deletelocalsnapshots <Datum>`, `log erase --all`
     /// und `launchctl bootout system/<label>`.
@@ -161,6 +137,11 @@ public struct AdminRemover: Sendable {
             .contains { $0.isEmpty || String($0) == "." || String($0) == ".." }
     }
 
+    /// Dienste von macOS ohne `com.apple.`-Präfix (klein geschrieben, Präfixvergleich).
+    static let appleServicePrefixes = [
+        "com.openssh.", "com.vix.cron", "org.cups.", "org.apache.httpd", "org.net-snmp.", "org.openldap.", "org.ntp.",
+    ]
+
     /// `^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$` auf Unicode-Skalaren (nur ASCII), nicht `com.apple.*`, nicht Klarschiff 2 selbst.
     static func isRemovableServiceLabel(_ label: String) -> Bool {
         let scalars = Array(label.unicodeScalars)
@@ -172,7 +153,8 @@ public struct AdminRemover: Sendable {
             return false
         }
         let lower = label.lowercased()
-        return !lower.hasPrefix("com.apple.") && !lower.hasPrefix(LaunchItemScanner.ownPrefix)
+        if lower.hasPrefix("com.apple.") || lower.hasPrefix(LaunchItemScanner.ownPrefix) { return false }
+        return !appleServicePrefixes.contains { lower.hasPrefix($0) }
     }
 
     private static let knownRmOptions: Set<String> = ["-r", "-f", "-R", "-rf", "-fr", "-Rf", "-fR"]

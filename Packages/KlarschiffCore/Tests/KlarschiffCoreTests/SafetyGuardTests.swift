@@ -43,7 +43,9 @@ private let guardWithTemp = SafetyGuard(
                       "/Library/LaunchDaemonsX/x.plist", "/private/Library/LaunchDaemons/x.plist"])
     func deniesOtherLaunchPaths(_ p: String) { #expect(guardUnderTest.check(URL(filePath: p)) != .allowed, "\(p)") }
 
-    @Test func deniesSymlinkIntoLaunchDaemons() throws {
+    // Der umgekehrte Fall (Symlink direkt in /Library/LaunchDaemons, der nach außen zeigt) braucht Root für die Fixture;
+    // er läuft über dieselbe Prüfung der aufgelösten Formen (siehe deniesSymlinkEscapingRoot).
+    @Test func deniesOutsideSymlinkPointingToLaunchDaemonPlist() throws {
         // Lexikalisch außerhalb, aufgelöst unter /Library/LaunchDaemons: beide Formen müssen erlaubt sein.
         let t = try FixtureTree()
         try t.symlink("link.plist", to: URL(filePath: "/Library/LaunchDaemons/x.plist"))

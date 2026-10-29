@@ -317,6 +317,9 @@ private func item(_ id: String, _ url: URL?, size: Int64? = 10) -> FindingItem {
         ["bootout"], [], ["bootstrap", "system/com.example"], ["remove", "com.example"], ["unload", "/Library/LaunchDaemons/x.plist"],
         ["kill", "9", "system/com.example"], ["BOOTOUT", "system/com.example"], ["bootout", "SYSTEM/com.example"],
         ["bootout", " system/com.example"], ["bootout", "system/de.frankjuchim.klarschiff2.check"],
+        ["bootout", "system/com.openssh.sshd"], ["bootout", "system/COM.VIX.CRON"], ["bootout", "system/org.cups.cupsd"],
+        ["bootout", "system/org.apache.httpd"], ["bootout", "system/Org.Net-Snmp.snmpd"],
+        ["bootout", "system/org.openldap.slapd"], ["bootout", "system/org.ntp.ntpd"],
     ])
     func adminDeniesOtherLaunchctl(_ args: [String]) async throws {
         let tree = try FixtureTree()
@@ -410,6 +413,32 @@ private func item(_ id: String, _ url: URL?, size: Int64? = 10) -> FindingItem {
         }
     }
 
+    @Test func adminConditionalStepNeedsPreviousStepOfSameItem() async throws {
+        let tree = try FixtureTree()
+        let (g, _) = makeGuard(tree)
+        let ex = FakeExecutor(fixed: .completed([0, 0]))
+        let a = AdminStep(executable: "/bin/launchctl", arguments: ["bootout", "system/a"], itemID: "A")
+        let b = AdminStep(executable: "/bin/rm", arguments: ["-f", "/Library/LaunchDaemons/b.plist"], itemID: "B",
+                          runsIfPreviousSucceeded: true)
+        let fnd = finding(.admin([a, b]), items: [item("A", nil), item("B", nil)])
+        let r = await AdminRemover(executor: ex, guard: g).remove([(fnd, fnd.items)], dryRun: false)
+        #expect(ex.runs == [[a]])
+        #expect(r[0].outcome == .removed(freed: 10))
+        guard case .failed = r[1].outcome else { Issue.record("expected failed"); return }
+    }
+
+    @Test func adminFailedBootoutReportsItsExitCode() async throws {
+        let tree = try FixtureTree()
+        let (g, _) = makeGuard(tree)
+        let b0 = AdminStep(executable: "/bin/launchctl", arguments: ["bootout", "system/b"], itemID: "B")
+        let b1 = AdminStep(executable: "/bin/rm", arguments: ["-f", "/Library/LaunchDaemons/b.plist"], itemID: "B",
+                           runsIfPreviousSucceeded: true)
+        let fnd = finding(.admin([b0, b1]), items: [item("B", nil)])
+        let ex = FakeExecutor(fixed: .completed([5, AdminScriptBuilder.skippedCode]))
+        let r = await AdminRemover(executor: ex, guard: g).remove([(fnd, fnd.items)], dryRun: false)
+        #expect(r[0].outcome == .failed("Exit 5"))
+    }
+
     @Test func adminMixedItemIDsRejected() async throws {
         let tree = try FixtureTree()
         let (g, _) = makeGuard(tree)
@@ -420,6 +449,17 @@ private func item(_ id: String, _ url: URL?, size: Int64? = 10) -> FindingItem {
         let r = await AdminRemover(executor: ex, guard: g).remove([(fnd, fnd.items)], dryRun: false)
         #expect(ex.runs.isEmpty)
         #expect(r.allSatisfy { if case .failed = $0.outcome { true } else { false } })
+        #expect(AdminStep.selectedSteps([a, b], items: fnd.items, selected: fnd.items) == nil)
+        let plan = RemovalPlan(findings: [fnd], selection: [fnd.id: ["A", "B"]], options: RemovalOptions())
+        #expect(plan.commandPreview.isEmpty)
+    }
+
+    @Test func selectedStepsLegacyRules() {
+        let s0 = rm("-rf", "/a"), s1 = rm("-rf", "/b")
+        let items = [item("A", nil), item("B", nil)]
+        #expect(AdminStep.selectedSteps([s0, s1], items: items, selected: [items[1]]) == [s1])
+        #expect(AdminStep.selectedSteps([s0], items: items, selected: [items[1]]) == [s0])
+        #expect(AdminStep.selectedSteps([], items: items, selected: items) == [])
     }
 
     @Test func adminItemGroupUnknownOrStepless() async throws {

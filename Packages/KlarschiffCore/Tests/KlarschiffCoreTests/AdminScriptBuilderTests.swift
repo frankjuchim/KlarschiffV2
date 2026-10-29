@@ -5,7 +5,7 @@ import Foundation
 @Suite struct AdminScriptBuilderTests {
     @Test func scriptQuotesHostilePaths() {
         let s = AdminScriptBuilder.script(for: [AdminStep(executable: "/bin/rm", arguments: ["-rf", "/usr/local/texlive/20 22'$(touch x)\""])], nonce: "N0")
-        #expect(s == "/bin/rm -rf '/usr/local/texlive/20 22'\\''$(touch x)\"'; echo \"KS_STEP N0 0 $?\"")
+        #expect(s == "/bin/rm -rf '/usr/local/texlive/20 22'\\''$(touch x)\"'; ks_rc=$?; echo \"KS_STEP N0 0 $ks_rc\"")
     }
 
     @Test func scriptJoinsStepsWithNewline() {
@@ -13,7 +13,42 @@ import Foundation
             AdminStep(executable: "/bin/rm", arguments: ["-rf", "/a"]),
             AdminStep(executable: "/usr/bin/tmutil", arguments: ["deletelocalsnapshots", "2026-01-01"]),
         ], nonce: "N0")
-        #expect(s == "/bin/rm -rf /a; echo \"KS_STEP N0 0 $?\"\n/usr/bin/tmutil deletelocalsnapshots 2026-01-01; echo \"KS_STEP N0 1 $?\"")
+        #expect(s == "/bin/rm -rf /a; ks_rc=$?; echo \"KS_STEP N0 0 $ks_rc\"\n/usr/bin/tmutil deletelocalsnapshots 2026-01-01; ks_rc=$?; echo \"KS_STEP N0 1 $ks_rc\"")
+    }
+
+    @Test func conditionalStepScript() {
+        let s = AdminScriptBuilder.script(for: [
+            AdminStep(executable: "/bin/launchctl", arguments: ["bootout", "system/x"]),
+            AdminStep(executable: "/bin/rm", arguments: ["-f", "/Library/LaunchDaemons/x y.plist"], runsIfPreviousSucceeded: true),
+        ], nonce: "N0")
+        #expect(s == "/bin/launchctl bootout system/x; ks_rc=$?; echo \"KS_STEP N0 0 $ks_rc\"\n"
+            + "case \"$ks_rc\" in 0|3|113) /bin/rm -f '/Library/LaunchDaemons/x y.plist'; ks_rc=$?;; *) ks_rc=125;; esac; echo \"KS_STEP N0 1 $ks_rc\"")
+        // Nach einem anderen Schritt zählt nur Exit 0.
+        let t = AdminScriptBuilder.script(for: [
+            AdminStep(executable: "/bin/rm", arguments: ["-f", "/a"]),
+            AdminStep(executable: "/bin/rm", arguments: ["-f", "/b"], runsIfPreviousSucceeded: true),
+        ], nonce: "N0")
+        #expect(t.contains("case \"$ks_rc\" in 0) /bin/rm -f /b;"))
+    }
+
+    /// Echte Shell (ohne Admin): der bedingte Schritt läuft nur nach 0/3/113 des vorherigen Bootouts.
+    @Test(arguments: [(Int32(0), true), (3, true), (113, true), (5, false), (1, false)])
+    func conditionalStepRunsInRealShell(_ c: (Int32, Bool)) async throws {
+        let tree = try FixtureTree()
+        let marker = tree.root.appending(path: "ran").path
+        // Der echte Bootout wird im fertigen Skript durch `(exit N)` ersetzt – launchd wird nie angefasst.
+        let steps = [
+            AdminStep(executable: "/bin/launchctl", arguments: ["bootout", "system/x"]),
+            AdminStep(executable: "/usr/bin/touch", arguments: [marker], runsIfPreviousSucceeded: true),
+        ]
+        let built = AdminScriptBuilder.script(for: steps, nonce: "N0")
+        #expect(built.hasPrefix("/bin/launchctl bootout system/x;"))
+        let script = "(exit \(c.0))" + built.dropFirst("/bin/launchctl bootout system/x".count)
+        let r = try await ProcessCommandRunner().run("/bin/sh", ["-c", script], timeout: .seconds(10), environment: [:])
+        let codes = AdminScriptBuilder.parse(r.stdout, stepCount: 2, nonce: "N0")
+        #expect(codes[0] == c.0)
+        #expect(FileManager.default.fileExists(atPath: marker) == c.1)
+        #expect(codes[1] == (c.1 ? 0 : AdminScriptBuilder.skippedCode))
     }
 
     @Test func parsesStepMarkers() {

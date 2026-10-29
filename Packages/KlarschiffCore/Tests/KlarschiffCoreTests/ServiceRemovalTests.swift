@@ -21,6 +21,8 @@ private func svc(
         isRunning: running, isOrphaned: orphaned, isOwnAgent: own, displayName: label, explanation: "Erklärung")
 }
 
+private let home = URL(filePath: "/Users/test")
+
 private func ok() -> CommandResult { CommandResult(exitCode: 0, stdout: "", stderr: "") }
 
 @Suite struct ServiceRemovalTests {
@@ -34,7 +36,7 @@ private func ok() -> CommandResult { CommandResult(exitCode: 0, stdout: "", stde
             svc("Com.Apple.y", .allUsers),
             svc("com.example.login", .loginItem, plist: "/Users/test/Library/LaunchAgents/com.example.login.plist"),
         ]
-        let findings = ServiceRemoval.finding(items, uid: 501)
+        let findings = ServiceRemoval.finding(items, home: home, uid: 501)
         #expect(findings.count == 1)
         #expect(findings.first?.items.map(\.id) == ["user/com.example.user"])
     }
@@ -46,13 +48,13 @@ private func ok() -> CommandResult { CommandResult(exitCode: 0, stdout: "", stde
         for scope in [LaunchScope.user, .allUsers, .system] {
             let item = svc(label, scope, plist: scope == .user ? "/Users/test/Library/LaunchAgents/x.plist"
                            : scope == .system ? "/Library/LaunchDaemons/x.plist" : "/Library/LaunchAgents/x.plist")
-            #expect(ServiceRemoval.finding([item], uid: 501).isEmpty, "\(label) \(scope)")
+            #expect(ServiceRemoval.finding([item], home: home, uid: 501).isEmpty, "\(label) \(scope)")
         }
     }
 
     @Test func maxLengthLabelAllowed() {
         let label = String(repeating: "a", count: 201)
-        #expect(ServiceRemoval.finding([svc(label, .system, plist: "/Library/LaunchDaemons/x.plist")], uid: 501).count == 1)
+        #expect(ServiceRemoval.finding([svc(label, .system, plist: "/Library/LaunchDaemons/x.plist")], home: home, uid: 501).count == 1)
     }
 
     @Test(arguments: [
@@ -64,15 +66,19 @@ private func ok() -> CommandResult { CommandResult(exitCode: 0, stdout: "", stde
         (LaunchScope.allUsers, "/Library/LaunchAgents/../LaunchDaemons/x.plist"),
         (LaunchScope.user, "/Library/LaunchAgents/x.plist"),
         (LaunchScope.user, "/Users/test/Documents/x.plist"),
+        (LaunchScope.user, "/Users/other/Library/LaunchAgents/x.plist"),
+        (LaunchScope.user, "/Users/test/sub/Library/LaunchAgents/x.plist"),
+        (LaunchScope.user, "/Users/test/Library/LaunchAgents/sub/x.plist"),
+        (LaunchScope.user, "/Users/test/Library/LaunchAgents/../LaunchAgents/x.plist"),
     ])
     func plistOutsideExpectedFolderExcluded(_ c: (LaunchScope, String)) {
-        #expect(ServiceRemoval.finding([svc("com.example.x", c.0, plist: c.1)], uid: 501).isEmpty, "\(c)")
+        #expect(ServiceRemoval.finding([svc("com.example.x", c.0, plist: c.1)], home: home, uid: 501).isEmpty, "\(c)")
     }
 
     @Test func missingPlistExcluded() {
         var item = svc("com.example.x", .system)
         item.plistURL = nil
-        #expect(ServiceRemoval.finding([item], uid: 501).isEmpty)
+        #expect(ServiceRemoval.finding([item], home: home, uid: 501).isEmpty)
     }
 
     @Test func userItemsTrashAndAdminStepsForOthers() throws {
@@ -81,7 +87,7 @@ private func ok() -> CommandResult { CommandResult(exitCode: 0, stdout: "", stde
             svc("com.example.agent", .allUsers),
             svc("com.example.daemon", .system),
         ]
-        let findings = ServiceRemoval.finding(items, uid: 501)
+        let findings = ServiceRemoval.finding(items, home: home, uid: 501)
         #expect(findings.count == 2)
         let trash = try #require(findings.first { $0.method == .trash })
         #expect(trash.items.map(\.url?.path) == ["/Users/test/Library/LaunchAgents/com.example.user.plist"])
@@ -101,7 +107,7 @@ private func ok() -> CommandResult { CommandResult(exitCode: 0, stdout: "", stde
             AdminStep(executable: launchctl, arguments: ["bootout", "system/com.example.daemon"],
                       itemID: "system/com.example.daemon"),
             AdminStep(executable: "/bin/rm", arguments: ["-f", "/Library/LaunchDaemons/com.example.daemon.plist"],
-                      itemID: "system/com.example.daemon"),
+                      itemID: "system/com.example.daemon", runsIfPreviousSucceeded: true),
         ])
     }
 
@@ -109,11 +115,37 @@ private func ok() -> CommandResult { CommandResult(exitCode: 0, stdout: "", stde
         let g = SafetyGuard(home: URL(filePath: "/Users/test"), userCacheDir: URL(filePath: "/private/var/folders/ab/xyz/C"),
                             allowedCacheSubdirs: [])
         let items = [svc("com.example.agent", .allUsers), svc("com.example.daemon", .system)]
-        let admin = ServiceRemoval.finding(items, uid: 501)[0]
+        let admin = ServiceRemoval.finding(items, home: home, uid: 501)[0]
         let ex = FakeExecutor(fixed: .completed([0, 0, 0]))
         let r = await AdminRemover(executor: ex, guard: g).remove([(admin, admin.items)], dryRun: false)
         #expect(ex.runs.count == 1 && ex.runs[0].count == 3)
         #expect(r.map(\.outcome) == [.removed(freed: nil), .removed(freed: nil)])
+    }
+
+    @Test(arguments: ["com.openssh.sshd", "COM.VIX.CRON", "com.vix.cron", "org.cups.cupsd", "ORG.Apache.HTTPD",
+                      "org.net-snmp.snmpd", "org.openldap.slapd", "org.ntp.ntpd", "Org.Ntp.sntp"])
+    func appleDaemonsWithoutApplePrefixExcluded(_ label: String) {
+        for scope in [LaunchScope.user, .allUsers, .system] {
+            #expect(ServiceRemoval.finding([svc(label, scope)], home: home, uid: 501).isEmpty, "\(label) \(scope)")
+        }
+    }
+
+    @Test func userHomeDefaultsToNSHomeDirectory() {
+        let real = svc("com.example.x", .user, plist: NSHomeDirectory() + "/Library/LaunchAgents/com.example.x.plist")
+        #expect(ServiceRemoval.finding([real]).count == 1)
+        #expect(ServiceRemoval.finding([svc("com.example.x", .user)]).isEmpty || NSHomeDirectory() == "/Users/test")
+    }
+
+    @Test func partialSelectionPreviewShowsOnlySelectedDaemon() {
+        let items = [svc("com.example.agent", .allUsers), svc("com.example.daemon", .system)]
+        let admin = ServiceRemoval.finding(items, home: home, uid: 501)[0]
+        let plan = RemovalPlan(findings: [admin], selection: [admin.id: ["system/com.example.daemon"]], options: RemovalOptions())
+        #expect(plan.commandPreview == [
+            "sudo /bin/launchctl bootout system/com.example.daemon",
+            "sudo /bin/rm -f /Library/LaunchDaemons/com.example.daemon.plist",
+        ])
+        let onlyA = RemovalPlan(findings: [admin], selection: [admin.id: ["allUsers/com.example.agent"]], options: RemovalOptions())
+        #expect(onlyA.commandPreview == ["sudo /bin/rm -f /Library/LaunchAgents/com.example.agent.plist"])
     }
 
     // MARK: bootout
@@ -133,12 +165,12 @@ private func ok() -> CommandResult { CommandResult(exitCode: 0, stdout: "", stde
             svc("com.example.login", .loginItem, running: true, plist: "/Users/test/Library/LaunchAgents/l.plist"),
             svc("bad label", .user, running: true, plist: "/Users/test/Library/LaunchAgents/b.plist"),
         ]
-        let r = await ServiceRemoval.bootout(items, runner: runner, uid: 501, dryRun: false)
+        let r = await ServiceRemoval.bootout(items, runner: runner, home: home, uid: 501, dryRun: false)
         #expect(runner.calls.map(\.0) == [launchctl, launchctl])
         #expect(runner.calls.map(\.1) == [["bootout", "gui/501/com.example.user"], ["bootout", "gui/501/com.example.agent"]])
         #expect(r.map(\.itemID) == ["user/com.example.user", "allUsers/com.example.agent"])
         #expect(r.map(\.outcome) == [.removed(freed: nil), .removed(freed: nil)])
-        let ids = ServiceRemoval.finding(items, uid: 501).map(\.id)
+        let ids = ServiceRemoval.finding(items, home: home, uid: 501).map(\.id)
         #expect(r.allSatisfy { ids.contains($0.findingID) })
     }
 
@@ -151,7 +183,7 @@ private func ok() -> CommandResult { CommandResult(exitCode: 0, stdout: "", stde
         runner.stub(launchctl, ["bootout", "gui/501/com.example.c"],
                     result: CommandResult(exitCode: 5, stdout: "", stderr: "Input/output error"))
         let items = ["a", "b", "c"].map { svc("com.example.\($0)", .user, running: true) }
-        let r = await ServiceRemoval.bootout(items, runner: runner, uid: 501, dryRun: false)
+        let r = await ServiceRemoval.bootout(items, runner: runner, home: home, uid: 501, dryRun: false)
         #expect(r[0].outcome == .removed(freed: nil))
         #expect(r[1].outcome == .removed(freed: nil))
         if case .failed(let m) = r[2].outcome { #expect(m.contains("Input/output error")) } else { Issue.record("erwartet failed") }
@@ -159,7 +191,7 @@ private func ok() -> CommandResult { CommandResult(exitCode: 0, stdout: "", stde
 
     @Test func bootoutDryRunNoCalls() async {
         let runner = FakeCommandRunner()
-        let r = await ServiceRemoval.bootout([svc("com.example.a", .user, running: true)], runner: runner, uid: 501, dryRun: true)
+        let r = await ServiceRemoval.bootout([svc("com.example.a", .user, running: true)], runner: runner, home: home, uid: 501, dryRun: true)
         #expect(runner.calls.isEmpty)
         #expect(r.map(\.outcome) == [.skipped("Trockenlauf")])
     }
