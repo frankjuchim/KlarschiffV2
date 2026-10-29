@@ -153,8 +153,8 @@ struct ConfirmSheet: View {
         }
         for tool in toolOrder {
             out.append(MethodGroup(
-                id: "tool-\(tool)", text: "Über \(tool) entfernt", symbol: "wrench.and.screwdriver",
-                emphasized: false, rows: rows(byTool[tool] ?? [])))
+                id: "tool-\(tool)", text: "Über \(tool) entfernt – direkt, nicht im Papierkorb", symbol: "wrench.and.screwdriver",
+                emphasized: true, rows: rows(byTool[tool] ?? [])))
         }
         if !plan.trashSteps.isEmpty {
             out.append(MethodGroup(

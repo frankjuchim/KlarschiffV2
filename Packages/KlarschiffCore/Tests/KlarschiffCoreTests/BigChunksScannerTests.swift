@@ -70,6 +70,17 @@ struct BigChunksScannerTests {
         #expect(size >= 100_000)
     }
 
+    @Test func trashSizeSumsICloudTrash() async throws {
+        let t = try FixtureTree()
+        try t.file("home/.Trash/x", bytes: 100_000)
+        try t.file("home/Library/Mobile Documents/.Trash/y", bytes: 200_000)
+        let both = try #require(await trashSize(.test(root: t.root)))
+        #expect(both >= 300_000)
+        // Ohne Vollzugriff bleibt nur der iCloud-Papierkorb sichtbar.
+        let icloudOnly = try #require(await trashSize(.test(root: t.root, hasFullDiskAccess: false)))
+        #expect(icloudOnly >= 200_000 && icloudOnly < 300_000)
+    }
+
     @Test func trashSizeZeroWhenMissing() async throws {
         let t = try FixtureTree()
         #expect(await trashSize(.test(root: t.root)) == 0)

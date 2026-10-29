@@ -33,6 +33,7 @@ targets:
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: "Klarschiff 2"
+        INFOPLIST_KEY_NSAppleEventsUsageDescription: "Klarschiff 2 bittet den Finder, den Papierkorb zu leeren."
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"

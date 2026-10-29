@@ -23,10 +23,16 @@ public func photosInfo(_ ctx: ScanContext) async -> PhotosInfo? {
     return best
 }
 
-/// Größe von `~/.Trash`; `nil` ohne Vollzugriff (statt fälschlich 0), 0 wenn der Ordner fehlt.
+/// Größe der Papierkörbe, die der Finder zeigt: `~/.Trash` (braucht Vollzugriff) plus der iCloud-Drive-Papierkorb
+/// `~/Library/Mobile Documents/.Trash` (ohne Vollzugriff lesbar). Fehlende Ordner zählen 0.
+/// `nil` nur, wenn der lokale Papierkorb nicht lesbar ist und der iCloud-Papierkorb leer ist (statt fälschlich 0).
 public func trashSize(_ ctx: ScanContext) async -> Int64? {
-    guard ctx.hasFullDiskAccess else { return nil }
-    let url = ctx.homePath(".Trash")
-    guard FileManager.default.fileExists(atPath: url.path) else { return 0 }
-    return try? await ctx.sizer.size(of: url)
+    func size(at url: URL) async -> Int64? {
+        guard FileManager.default.fileExists(atPath: url.path) else { return 0 }
+        return try? await ctx.sizer.size(of: url)
+    }
+    let iCloud = await size(at: ctx.homePath("Library/Mobile Documents/.Trash")) ?? 0
+    let local = ctx.hasFullDiskAccess ? await size(at: ctx.homePath(".Trash")) : nil
+    if let local { return local + iCloud }
+    return iCloud > 0 ? iCloud : nil
 }

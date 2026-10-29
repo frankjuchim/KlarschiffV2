@@ -352,29 +352,54 @@ private func tempDefaults() -> UserDefaults {
 }
 
 @Test @MainActor func emptyTrashFailurePublishesError() async {
-    let model = makeModel([], emptyTrash: { _ in throw TrashError.unreadable })
+    let model = makeModel([], emptyTrash: { _ in throw EmptyTrashError.failed("Boom") })
     await model.emptyTrash()
     #expect(model.lastRemoval == nil)
-    #expect(model.lastError == "Papierkorb konnte nicht gelesen werden – braucht Vollzugriff.")
+    #expect(model.lastError == "Papierkorb konnte nicht geleert werden: Boom")
     #expect(model.isRemoving == false)
 }
 
-@Test func liveTrashListingThrowsWhenUnreadable() async throws {
-    let fm = FileManager.default
-    let home = fm.temporaryDirectory.appending(path: "klarschiff-apptests-trash-\(UUID().uuidString)")
-    try fm.createDirectory(at: home, withIntermediateDirectories: true)
-    let deleter = DeleteRemover(guard: SafetyGuard.production(home: home))
-    let disk: @Sendable () throws -> DiskSpace = { DiskSpace(free: 1, total: 2) }
-
-    // Kein Papierkorb-Ordner: leerer Bericht, kein Fehler.
-    let empty = try await AppDependencies.emptyTrashContents(home: home, remover: deleter, disk: disk, dryRun: true)
-    #expect(empty.results.isEmpty)
-
-    // `.Trash` ist nicht als Ordner lesbar → Fehler statt scheinbarem Erfolg.
-    try Data("x".utf8).write(to: home.appending(path: ".Trash"))
-    await #expect(throws: TrashError.unreadable) {
-        _ = try await AppDependencies.emptyTrashContents(home: home, remover: deleter, disk: disk, dryRun: true)
+private final class RecordingRunner: CommandRunner {
+    private let calls = Mutex<[[String]]>([])
+    let result: CommandResult
+    init(_ result: CommandResult) { self.result = result }
+    var recorded: [[String]] { calls.withLock { $0 } }
+    func run(_ executable: String, _ arguments: [String], timeout: Duration, environment: [String: String]) async throws -> CommandResult {
+        calls.withLock { $0.append([executable] + arguments + ["\(timeout)"]) }
+        return result
     }
+}
+
+private let finderCall = ["/usr/bin/osascript", "-e", "tell application \"Finder\" to empty trash", "\(Duration.seconds(600))"]
+
+@Test func finderEmptyTrashCallsOsascriptAndMeasuresFreed() async throws {
+    let runner = RecordingRunner(CommandResult(exitCode: 0, stdout: "", stderr: ""))
+    let free = Mutex<Int64>(100)
+    let disk: @Sendable () throws -> DiskSpace = { DiskSpace(free: free.withLock { defer { $0 += 50 }; return $0 }, total: 1000) }
+    let report = try await AppDependencies.emptyTrashViaFinder(runner: runner, disk: disk, dryRun: false)
+    #expect(runner.recorded == [finderCall])
+    #expect(report.freedBytes == 50)
+    #expect(report.failures.isEmpty)
+}
+
+@Test func finderEmptyTrashDryRunDoesNothing() async throws {
+    let runner = RecordingRunner(CommandResult(exitCode: 0, stdout: "", stderr: ""))
+    let report = try await AppDependencies.emptyTrashViaFinder(
+        runner: runner, disk: { DiskSpace(free: 1, total: 2) }, dryRun: true)
+    #expect(runner.recorded.isEmpty)
+    #expect(report.results.isEmpty && report.freedBytes == 0)
+}
+
+@Test @MainActor func finderAutomationDeniedPublishesPermissionMessage() async {
+    let runner = RecordingRunner(CommandResult(
+        exitCode: 1, stdout: "", stderr: "execution error: Nicht erlaubt (-1743)"))
+    let model = makeModel([], emptyTrash: { dry in
+        try await AppDependencies.emptyTrashViaFinder(runner: runner, disk: { DiskSpace(free: 1, total: 2) }, dryRun: dry)
+    })
+    await model.emptyTrash()
+    #expect(model.lastError?.contains("Klarschiff 2 braucht die Erlaubnis, den Finder zu steuern") == true)
+    #expect(model.lastError?.contains("Datenschutz & Sicherheit → Automation") == true)
+    #expect(model.lastRemoval == nil)
 }
 
 @Test @MainActor func failuresMapToTabByScannerCategory() {
@@ -488,9 +513,10 @@ private func tempDefaults() -> UserDefaults {
 
     let groups = ConfirmSheet.groups(for: RemovalPlan(findings: all, selection: selection, options: RemovalOptions()))
     #expect(groups.map(\.text) == [
-        "Über brew entfernt", "In den Papierkorb",
+        "Über brew entfernt – direkt, nicht im Papierkorb", "In den Papierkorb",
         "Wird direkt gelöscht – nicht im Papierkorb", "Braucht dein Admin-Passwort (eine Abfrage)",
     ])
+    #expect(groups.first { $0.id == "tool-brew" }?.emphasized == true)
     #expect(groups.first { $0.id == "trash" }?.rows.map(\.title) == ["trash", "huge"])
     #expect(groups.first { $0.id == "delete" }?.rows.map(\.title) == ["del"])
     #expect(groups.first { $0.id == "delete" }?.emphasized == true)

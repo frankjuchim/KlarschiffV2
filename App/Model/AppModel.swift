@@ -2,14 +2,25 @@ import Foundation
 import Observation
 import KlarschiffCore
 
-enum TrashError: Error, Equatable {
-    case unreadable
+enum EmptyTrashError: Error, Equatable {
+    /// Der Finder hat das Leeren abgelehnt oder es kam zu keinem Ergebnis; Text ist ein kurzer Grund.
+    case failed(String)
+    /// Apple Events an den Finder sind nicht erlaubt (-1743).
+    case automationDenied
+
+    var message: String {
+        switch self {
+        case .failed(let reason): "Papierkorb konnte nicht geleert werden: \(reason)"
+        case .automationDenied:
+            "Papierkorb konnte nicht geleert werden: Klarschiff 2 braucht die Erlaubnis, den Finder zu steuern. "
+                + "Du erteilst sie unter Systemeinstellungen → Datenschutz & Sicherheit → Automation."
+        }
+    }
 }
 
 /// Freundliche Fehlermeldungen für die Oberfläche.
 enum AppErrorText {
     static let keepList = "Konnte die Behalten-Liste nicht speichern."
-    static let trashUnreadable = "Papierkorb konnte nicht gelesen werden – braucht Vollzugriff."
     static let trashFailed = "Papierkorb konnte nicht geleert werden."
     static let dryRunPlan = "Trockenlauf aktiv – ein Plan ohne Trockenlauf wurde nicht ausgeführt."
 }
@@ -25,7 +36,7 @@ struct AppDependencies: Sendable {
     var photos: @Sendable (ScanContext) async -> PhotosInfo?
     var trash: @Sendable (ScanContext) async -> Int64?
     var fullDiskAccess: @Sendable () -> Bool
-    /// Wirft `TrashError.unreadable`, wenn der Papierkorb nicht gelesen werden kann (z. B. ohne Vollzugriff).
+    /// Leert den Papierkorb über den Finder; wirft `EmptyTrashError`.
     var emptyTrash: @Sendable (_ dryRun: Bool) async throws -> RemovalReport
     var dryRun: Bool
     var terminate: @Sendable (AppRef) async -> Bool
@@ -290,8 +301,8 @@ final class AppModel {
         do {
             lastRemoval = try await deps.emptyTrash(runDry)
             lastRemovalWasDryRun = runDry
-        } catch TrashError.unreadable {
-            lastError = AppErrorText.trashUnreadable
+        } catch let error as EmptyTrashError {
+            lastError = error.message
         } catch {
             lastError = AppErrorText.trashFailed
         }
@@ -399,7 +410,7 @@ extension AppDependencies {
             photos: { ctx in await photosInfo(ctx) },
             trash: { ctx in await trashSize(ctx) },
             fullDiskAccess: fda,
-            emptyTrash: { dryRun in try await emptyTrashContents(home: home, remover: deleter, disk: disk, dryRun: dryRun) },
+            emptyTrash: { dryRun in try await emptyTrashViaFinder(runner: commands, disk: disk, dryRun: dryRun) },
             dryRun: isDryRunRequested,
             terminate: { ref in
                 guard await apps.terminate(ref) else { return false }
@@ -411,36 +422,31 @@ extension AppDependencies {
             })
     }
 
-    /// Löscht jedes Kind von `~/.Trash` über `DeleteRemover` (also mit SafetyGuard).
-    /// Fehlt der Ordner, ist nichts zu tun; ist er nicht lesbar, wirft die Funktion `TrashError.unreadable`.
-    static func emptyTrashContents(
-        home: URL, remover: DeleteRemover, disk: @Sendable () throws -> DiskSpace, dryRun: Bool
+    /// Leert alle Papierkörbe, die der Finder zeigt (lokal, iCloud Drive, externe Volumes).
+    /// Trockenlauf: nichts tun, leerer Bericht.
+    static func emptyTrashViaFinder(
+        runner: CommandRunner, disk: @Sendable () throws -> DiskSpace, dryRun: Bool
     ) async throws -> RemovalReport {
-        let trashDir = home.appending(path: ".Trash")
-        let fm = FileManager.default
-        guard fm.fileExists(atPath: trashDir.path) else { return RemovalReport(results: [], freedBytes: 0, failures: []) }
-        let names: [String]
-        do {
-            names = try fm.contentsOfDirectory(atPath: trashDir.path)
-        } catch {
-            throw TrashError.unreadable
-        }
-        guard !names.isEmpty else { return RemovalReport(results: [], freedBytes: 0, failures: []) }
-        let items = names.sorted().map { FindingItem(id: $0, url: trashDir.appending(path: $0), name: $0) }
-        let finding = Finding(
-            id: FindingID(scannerID: "system.trash", key: "all"), category: .system, title: "Papierkorb",
-            summary: "", risk: .review, method: .delete, items: items, size: nil, blockingApps: [],
-            keepSuggested: false, commandPreview: [], needsFullDiskAccess: true)
+        let empty = RemovalReport(results: [], freedBytes: 0, failures: [])
+        if dryRun { return empty }
         let before = try? disk()
-        let results = await remover.remove(finding, items: items, dryRun: dryRun)
-        var freed: Int64 = 0
-        if !dryRun, let before, let after = try? disk() { freed = max(0, after.free - before.free) }
-        let failures = results.filter {
-            switch $0.outcome {
-            case .failed, .cancelled: true
-            case .skipped, .removed: false
-            }
+        let result: CommandResult
+        do {
+            result = try await runner.run(
+                "/usr/bin/osascript", ["-e", "tell application \"Finder\" to empty trash"], timeout: .seconds(600))
+        } catch CommandError.timeout {
+            throw EmptyTrashError.failed("Zeitüberschreitung")
+        } catch {
+            throw EmptyTrashError.failed(error.localizedDescription)
         }
-        return RemovalReport(results: results, freedBytes: freed, failures: failures)
+        if !result.succeeded {
+            if result.stderr.contains("-1743") { throw EmptyTrashError.automationDenied }
+            let trimmed = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            let reason = trimmed.count > 200 ? String(trimmed.prefix(200)) + "…" : trimmed
+            throw EmptyTrashError.failed(reason.isEmpty ? "Exit \(result.exitCode)" : reason)
+        }
+        var freed: Int64 = 0
+        if let before, let after = try? disk() { freed = max(0, after.free - before.free) }
+        return RemovalReport(results: [], freedBytes: freed, failures: [])
     }
 }
