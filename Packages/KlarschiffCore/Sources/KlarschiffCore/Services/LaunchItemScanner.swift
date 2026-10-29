@@ -29,11 +29,17 @@ public struct LaunchItemScanner: Sendable {
         for (scope, dir) in sources {
             items += read(directory: dir, scope: scope, ctx: ctx)
         }
+        let counts = Dictionary(grouping: items, by: \.id).mapValues(\.count)
+        for i in items.indices where counts[items[i].id, default: 0] > 1 {
+            items[i].id += "#" + (items[i].plistURL?.lastPathComponent ?? "")
+        }
         let running = await runningLabels(items, runner: ctx.runner, uid: uid)
         for i in items.indices { items[i].isRunning = running.contains(items[i].id) }
         return items.sorted { a, b in
             if a.scope != b.scope { return a.scope.sortIndex < b.scope.sortIndex }
-            return a.displayName.localizedStandardCompare(b.displayName) == .orderedAscending
+            let c = a.displayName.localizedStandardCompare(b.displayName)
+            if c != .orderedSame { return c == .orderedAscending }
+            return (a.label, a.id) < (b.label, b.id)
         }
     }
 
@@ -81,19 +87,41 @@ public struct LaunchItemScanner: Sendable {
         var appURL: URL?
         var orphaned = false
         var missingProgram: String?
+        var programInApp = false
+        var appMovedButInstalled = false
+        var offlineVolume = false
         var appGone = false
 
-        if let program, program.hasPrefix("/") {
-            let real = ctx.absolute(program)
-            if let appPath = Self.appBundlePath(in: program) {
-                let appReal = ctx.absolute(appPath)
-                if fm.fileExists(atPath: appReal.path) { appURL = appReal } else { orphaned = true; missingProgram = program }
+        if let program, program.hasPrefix("/"), !Self.isSystemPath(program) {
+            if let volume = Self.volumePath(of: program), Self.presence(ctx.absolute(volume)) != .present {
+                offlineVolume = true  // Laufwerk nicht verbunden → unklar, nie verwaist
+            } else {
+                let programPresence = Self.presence(ctx.absolute(program))
+                var appPresence = Presence.present
+                if let appPath = Self.appBundlePath(in: program) {
+                    programInApp = true
+                    let appReal = ctx.absolute(appPath)
+                    appPresence = Self.presence(appReal)
+                    if appPresence == .present { appURL = appReal }
+                }
+                // Nur sicher fehlend (ENOENT/ENOTDIR), nie bei unklaren Fehlern wie fehlender Berechtigung.
+                if programPresence != .unknown, appPresence != .unknown,
+                   programPresence == .missing || appPresence == .missing {
+                    orphaned = true
+                    missingProgram = program
+                }
             }
-            if !fm.fileExists(atPath: real.path) { orphaned = true; missingProgram = program }
         }
         if appURL == nil {
             appURL = bundleIDs.lazy.compactMap { installedApp($0) }.first
         }
+        if orphaned, appURL != nil {
+            // z. B. App umbenannt/verschoben: die App ist über ihre Bundle-ID noch da.
+            orphaned = false
+            appMovedButInstalled = true
+        }
+        // Grenze: Bei BundleProgram ohne Program gibt es nur die Bundle-IDs als Hinweis; verwaist nur, wenn
+        // mindestens eine ID angegeben ist und keine davon eine installierte App ergibt.
         if hasBundleProgram, program == nil, !bundleIDs.isEmpty, appURL == nil {
             orphaned = true
             appGone = true
@@ -113,9 +141,14 @@ public struct LaunchItemScanner: Sendable {
         if isOwn {
             explanation = "Das ist der automatische Check von Klarschiff 2. Er bleibt immer erhalten."
         } else if orphaned, let missingProgram {
-            explanation = "Das Programm fehlt: \(missingProgram). Die App wurde vermutlich gelöscht."
+            explanation = "Das Programm fehlt: \(missingProgram). "
+                + (programInApp ? "Die App wurde vermutlich gelöscht." : "Es wurde vermutlich deinstalliert.")
         } else if orphaned, appGone {
             explanation = "Die zugehörige App ist nicht mehr installiert. Die App wurde vermutlich gelöscht."
+        } else if appMovedButInstalled {
+            explanation = "Das Programm liegt nicht mehr am erwarteten Ort, die App ist aber installiert."
+        } else if offlineVolume {
+            explanation = "Das Programm liegt auf einem nicht verbundenen Laufwerk."
         } else if appURL != nil {
             explanation = "Gehört zu \(name)."
         } else {
@@ -126,6 +159,27 @@ public struct LaunchItemScanner: Sendable {
             id: "\(scope.rawValue)/\(label)", label: label, scope: scope, plistURL: url, programPath: program,
             associatedBundleIDs: bundleIDs, appURL: appURL, startKind: startKind, isRunning: false,
             isOrphaned: orphaned, isOwnAgent: isOwn, displayName: name, explanation: explanation)
+    }
+
+    enum Presence { case present, missing, unknown }
+
+    /// `stat`-Semantik: nur ENOENT/ENOTDIR gelten als „fehlt“, jeder andere Fehler als „unklar“.
+    static func presence(_ url: URL) -> Presence {
+        var st = stat()
+        if stat(url.path, &st) == 0 { return .present }
+        return errno == ENOENT || errno == ENOTDIR ? .missing : .unknown
+    }
+
+    /// `/Volumes/<name>` für Pfade auf externen Laufwerken, sonst nil.
+    static func volumePath(of path: String) -> String? {
+        let parts = path.split(separator: "/", omittingEmptySubsequences: true)
+        guard parts.count >= 2, parts[0] == "Volumes" else { return nil }
+        return "/Volumes/\(parts[1])"
+    }
+
+    /// Systemeigene Programme (/bin, /usr/bin …) gelten nie als fehlend.
+    static func isSystemPath(_ path: String) -> Bool {
+        ["/bin/", "/sbin/", "/usr/bin/", "/usr/sbin/", "/usr/libexec/", "/System/"].contains { path.hasPrefix($0) }
     }
 
     /// Erster Pfadanteil, der auf `.app` endet (inkl.), sonst nil.

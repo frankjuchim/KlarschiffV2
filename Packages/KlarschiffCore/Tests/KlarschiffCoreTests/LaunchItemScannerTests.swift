@@ -29,7 +29,7 @@ import Testing
                   ["Label": "com.x.gone", "ProgramArguments": ["/opt/gone/tool"]])
         let items = await scan(t)
         #expect(item("com.x.gone", items)?.isOrphaned == true)
-        #expect(item("com.x.gone", items)?.explanation == "Das Programm fehlt: /opt/gone/tool. Die App wurde vermutlich gelöscht.")
+        #expect(item("com.x.gone", items)?.explanation == "Das Programm fehlt: /opt/gone/tool. Es wurde vermutlich deinstalliert.")
         #expect(item("com.x.present", items)?.isOrphaned == false)
     }
 
@@ -116,6 +116,68 @@ import Testing
         #expect(!own.isOrphaned)
         #expect(own.startKind == .scheduled)
         #expect(own.displayName == "Klarschiff 2 – automatischer Check")
+    }
+
+    @Test func permissionErrorIsNotOrphaned() async throws {
+        let t = try FixtureTree()
+        let locked = try t.dir("opt/locked")
+        try t.file("opt/locked/tool", bytes: 3)
+        try plist(t, "home/Library/LaunchAgents/com.p.locked.plist", ["Label": "com.p.locked", "Program": "/opt/locked/tool"])
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: locked.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path) }
+        let items = await scan(t)
+        #expect(item("com.p.locked", items)?.isOrphaned == false)
+    }
+
+    @Test func unmountedVolumeIsNotOrphaned() async throws {
+        let t = try FixtureTree()
+        try plist(t, "home/Library/LaunchAgents/com.v.off.plist", ["Label": "com.v.off", "Program": "/Volumes/Ext/tool"])
+        try plist(t, "home/Library/LaunchAgents/com.v.on.plist", ["Label": "com.v.on", "Program": "/Volumes/Mounted/tool"])
+        try t.dir("Volumes/Mounted")
+        let items = await scan(t)
+        let off = try #require(item("com.v.off", items))
+        #expect(!off.isOrphaned)
+        #expect(off.explanation.contains("nicht verbundenen Laufwerk"))
+        #expect(item("com.v.on", items)?.isOrphaned == true)
+    }
+
+    @Test func renamedAppWithInstalledBundleIDIsNotOrphaned() async throws {
+        let t = try FixtureTree()
+        let app = t.root.appending(path: "Applications/New Name.app")
+        try plist(t, "home/Library/LaunchAgents/com.n.helper.plist", [
+            "Label": "com.n.helper", "ProgramArguments": ["/Applications/Old Name.app/Contents/MacOS/h"],
+            "AssociatedBundleIdentifiers": ["com.n.app"]])
+        let items = await scan(t, installed: { $0 == "com.n.app" ? app : nil })
+        let i = try #require(item("com.n.helper", items))
+        #expect(!i.isOrphaned)
+        #expect(i.explanation == "Das Programm liegt nicht mehr am erwarteten Ort, die App ist aber installiert.")
+    }
+
+    @Test func systemShellAndRelativePathsNotOrphaned() async throws {
+        let t = try FixtureTree()
+        try plist(t, "home/Library/LaunchAgents/com.s.sh.plist", [
+            "Label": "com.s.sh", "ProgramArguments": ["/bin/sh", "-c", "echo /nonexistent"]])
+        try plist(t, "home/Library/LaunchAgents/com.s.rel.plist", ["Label": "com.s.rel", "ProgramArguments": ["python3"]])
+        try plist(t, "home/Library/LaunchAgents/com.s.tilde.plist", ["Label": "com.s.tilde", "Program": "~/bin/tool"])
+        let items = await scan(t)
+        #expect(items.count == 3)
+        #expect(items.allSatisfy { !$0.isOrphaned })
+    }
+
+    @Test func duplicateLabelsGetUniqueIDs() async throws {
+        let t = try FixtureTree()
+        try plist(t, "home/Library/LaunchAgents/a.plist", ["Label": "com.d.same", "Program": "/nope"])
+        try plist(t, "home/Library/LaunchAgents/b.plist", ["Label": "com.d.same", "Program": "/nope"])
+        let items = await scan(t)
+        #expect(items.count == 2)
+        #expect(Set(items.map(\.id)).count == 2)
+    }
+
+    @Test func bundleProgramWithoutIDsIsNotOrphaned() async throws {
+        let t = try FixtureTree()
+        try plist(t, "home/Library/LaunchAgents/com.b.none.plist", ["Label": "com.b.none", "BundleProgram": "Contents/x"])
+        let items = await scan(t)
+        #expect(item("com.b.none", items)?.isOrphaned == false)
     }
 
     @Test func startKinds() {
