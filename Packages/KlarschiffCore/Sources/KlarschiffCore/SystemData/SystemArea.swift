@@ -20,9 +20,11 @@ public struct SystemAreaDefinition: Sendable {
     public var children: [SystemAreaDefinition]
     /// Titel des „Rest von“-Kinds; nil = kein Rest.
     public var restTitle: String?
+    /// Weitere Pfade, die zur Größe dieses Bereichs zählen (Messung = path + extraPaths).
+    public var extraPaths: [String]
 
     public init(id: String, path: String, title: String, summary: String, verdict: AreaVerdict,
-                children: [SystemAreaDefinition] = [], restTitle: String? = nil) {
+                children: [SystemAreaDefinition] = [], restTitle: String? = nil, extraPaths: [String] = []) {
         self.id = id
         self.path = path
         self.title = title
@@ -30,6 +32,7 @@ public struct SystemAreaDefinition: Sendable {
         self.verdict = verdict
         self.children = children
         self.restTitle = restTitle
+        self.extraPaths = extraPaths
     }
 }
 

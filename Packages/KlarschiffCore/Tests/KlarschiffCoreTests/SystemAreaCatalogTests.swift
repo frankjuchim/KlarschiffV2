@@ -51,9 +51,27 @@ import Testing
             #expect(!d.title.isEmpty && !d.summary.isEmpty)
             #expect(!d.summary.contains("#") && !d.title.contains("#"))
         }
-        for e in AssetNameMap.allKnownTitles {
+        for e in AssetNameMap.allKnownTexts {
             #expect(!e.isEmpty && !e.contains("#"))
         }
+    }
+
+    @Test func developerIsNestedUnderLibraryAndSeeFindingTabsAreDeveloper() {
+        let top = SystemAreaCatalog.definitions()
+        #expect(!top.contains { $0.id == "developer" })
+        #expect(top.first { $0.id == "library" }?.children.contains { $0.id == "developer" } == true)
+        for d in all() {
+            if case .seeFinding(_, let tab) = d.verdict { #expect(tab == .developer) }
+        }
+        #expect(all().first { $0.id == "var.db.diagnostics" }?.extraPaths == ["/private/var/db/uuidtext"])
+    }
+
+    @Test func updateHintAndRuleOrder() {
+        #expect(AssetNameMap.explanation(forAssetDirectory: "MacSoftwareUpdate").contains("macOS räumt die Datei selbst weg"))
+        #expect(AssetNameMap.entry(forAssetDirectory: "UAF_LinguisticData").title == "Sprachdaten")
+        #expect(AssetNameMap.entry(forAssetDirectory: "LinguisticDataAuto").title == "Sprachdaten")
+        #expect(AssetNameMap.entry(forAssetDirectory: "UAF_Siri_Understanding").title == "Siri-Sprachdaten")
+        #expect(AssetNameMap.entry(forAssetDirectory: "UAF_FM_Visual").title == "Apple-Intelligence-Modelle")
     }
 
     @Test func realAssetsAllMapWithoutCrash() throws {

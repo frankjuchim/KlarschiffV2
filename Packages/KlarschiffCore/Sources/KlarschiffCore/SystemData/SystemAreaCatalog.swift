@@ -37,9 +37,11 @@ public enum SystemAreaCatalog {
                         id: "var.db.diagnostics", path: "/private/var/db/diagnostics",
                         title: "Diagnosedaten (Systemprotokoll)",
                         summary: "Das Systemprotokoll von macOS samt Zuordnungsdateien. Du kannst es löschen; macOS beginnt dann ein neues Protokoll. Dafür brauchst Du Dein Admin-Passwort.",
-                        verdict: .cleanable),
+                        verdict: .cleanable,
+                        extraPaths: ["/private/var/db/uuidtext"]),
                 ],
-                restTitle: "System-Datenbanken"),
+                // Hinweis Task 4: Rest = Größe(path) - Summe(Kinder inkl. deren extraPaths, also auch uuidtext).
+                restTitle: "Weitere System-Datenbanken"),
             SystemAreaDefinition(
                 id: "library", path: "/Library",
                 title: "Systemweite Bibliothek",
@@ -56,6 +58,11 @@ public enum SystemAreaCatalog {
                         title: "System-Protokolle",
                         summary: "Protokolldateien von macOS und Programmen. Alte Protokolle kannst Du bedenkenlos entfernen.",
                         verdict: .cleanable),
+                    SystemAreaDefinition(
+                        id: "developer", path: "/Library/Developer",
+                        title: "Entwicklerwerkzeuge",
+                        summary: "Command Line Tools und Simulator-Laufzeiten. Simulator-Laufzeiten entfernst Du sicher über den passenden Fund im Tab Entwickler.",
+                        verdict: .seeFinding(scannerID: "xcode.libraryDeveloper", tab: .developer)),
                 ],
                 restTitle: "Systemweite Einstellungen & Komponenten"),
             SystemAreaDefinition(
@@ -63,11 +70,6 @@ public enum SystemAreaCatalog {
                 title: "macOS-Komponenten (Assets)",
                 summary: "Von macOS nachgeladene Zusatzdaten wie Sprachmodelle, Schriften, Wörterbücher und Simulator-Laufzeiten. Unten siehst Du, was davon wie viel Platz braucht.",
                 verdict: .keep),
-            SystemAreaDefinition(
-                id: "developer", path: "/Library/Developer",
-                title: "Entwicklerwerkzeuge",
-                summary: "Command Line Tools und Simulator-Laufzeiten. Simulator-Laufzeiten entfernst Du sicher über den passenden Fund im Tab Entwickler.",
-                verdict: .seeFinding(scannerID: "xcode.libraryDeveloper", tab: .developer)),
             SystemAreaDefinition(
                 id: "opt", path: "/opt",
                 title: "Zusatzsoftware",

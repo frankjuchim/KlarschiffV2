@@ -39,11 +39,11 @@ public enum AssetNameMap {
         Rule(match: .exact("xrOSSimulatorRuntime"), title: "visionOS-Simulator",
              explanation: "Laufzeit für den visionOS-Simulator. Entfernen kannst Du sie sicher über den Fund „Simulator-Runtimes“ im Tab Entwickler.", verdict: simFinding),
         Rule(match: .exact("MacSoftwareUpdate"), title: "Heruntergeladenes macOS-Update",
-             explanation: "Ein von macOS vorab geladenes Update. Es verschwindet nach der Installation von selbst. Willst Du es nicht, lösche es in den Systemeinstellungen unter Softwareupdate."),
+             explanation: "Ein von macOS vorab geladenes Update. Installiere das Update oder warte – macOS räumt die Datei selbst weg."),
         Rule(match: .exact("MacSplatSoftwareUpdate"), title: "Heruntergeladenes macOS-Update",
-             explanation: "Ein von macOS vorab geladenes Update. Es verschwindet nach der Installation von selbst. Willst Du es nicht, lösche es in den Systemeinstellungen unter Softwareupdate."),
+             explanation: "Ein von macOS vorab geladenes Update. Installiere das Update oder warte – macOS räumt die Datei selbst weg."),
         Rule(match: .exact("SFRSoftwareUpdate"), title: "Schnelle Sicherheitsupdates",
-             explanation: "Daten für kleine Sicherheitsupdates, die macOS ohne Neustart einspielt."),
+             explanation: "Daten für kleine Sicherheitsupdates von macOS."),
         Rule(match: .exact("MacRecoveryOSUpdate"), title: "Wiederherstellungs-Update",
              explanation: "Aktualisierung der macOS-Wiederherstellung. macOS verwaltet sie selbst."),
         Rule(match: .exact("RecoveryOSUpdateBrain"), title: "Wiederherstellungs-Update (Werkzeug)",
@@ -89,7 +89,7 @@ public enum AssetNameMap {
         Rule(match: .prefix("LinguisticData"), title: "Sprachdaten",
              explanation: "Daten für Rechtschreibprüfung, Textvorschläge und Spracherkennung."),
         Rule(match: .prefix("DictionaryServices_"), title: "Wörterbücher",
-             explanation: "Die Wörterbücher der Lexikon-App und der Nachschlagen-Funktion."),
+             explanation: "Die Wörterbücher der Wörterbuch-App und der Nachschlagen-Funktion."),
         Rule(match: .prefix("Font"), title: "Schriften",
              explanation: "Zusätzliche Schriften, die macOS bei Bedarf nachlädt."),
         Rule(match: .exact("DesktopPicture"), title: "Hintergrundbilder",
@@ -138,5 +138,5 @@ public enum AssetNameMap {
 
     /// Nur für Tests: alle Einstufungen bzw. Titel der bekannten Regeln.
     static var allKnownVerdicts: [AreaVerdict] { rules.map(\.verdict) }
-    static var allKnownTitles: [String] { rules.flatMap { [$0.title, $0.explanation] } }
+    static var allKnownTexts: [String] { rules.flatMap { [$0.title, $0.explanation] } }
 }
