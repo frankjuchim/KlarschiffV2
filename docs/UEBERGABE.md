@@ -6,9 +6,10 @@
   Direkt-Download ohne Sandbox · Bundle-ID `de.frankjuchim.klarschiff2` · Admin erst per Passwortabfrage pro Lauf, später Helper · macOS 26 · fünf Tabs · fünf Teilprojekte.
 - Spec Teilprojekt 1 und Umsetzungsplan (18 Tasks) geschrieben.
 
-## Noch offen vor dem Start
-1. **Spec und Plan kurz gegenlesen** (Frank). Besonders: Katalog-Ergänzungen (Spec Abschnitt 6) und die geänderte Regel „Großes wird direkt gelöscht, alles andere landet im Papierkorb“.
-2. Ausführungsart wählen: *Subagent-driven* (empfohlen) oder *Native*.
+## Freigaben (29.10.2026)
+- Spec und Plan von Frank abgenommen, inkl. „Großes wird direkt gelöscht“.
+- Ausführung: **Subagent-driven** (superpowers:subagent-driven-development).
+- Ziel später: Download auf frankjuchim.de (Developer ID + Notarisierung, Task 18); Auto-Updates (Sparkle) als eigenes Teilprojekt danach.
 
 ## Voraussetzungen auf dem Mac
 - Xcode (passend zu macOS 26/27) und `brew install xcodegen`
