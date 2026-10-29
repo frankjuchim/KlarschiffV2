@@ -78,10 +78,10 @@ enum BackgroundCheck {
     }
 
     /// Produktion: verwaiste Hintergrunddienste, die Klarschiff 2 entfernen dürfte (nur lesend, `launchctl print`).
-    /// Anmeldeobjekte, eigene Agents und alles nicht Entfernbare zählen nicht.
+    /// `isRemovable` schließt nicht verwaiste, Apple-, eigene Dienste und Anmeldeobjekte aus.
     static func orphanedServicesLive(_ ctx: ScanContext) async -> [String] {
         await LaunchItemScanner().scan(ctx)
-            .filter { $0.isOrphaned && !$0.isOwnAgent && $0.scope != .loginItem && ServiceRemoval.isRemovable($0, home: ctx.home) }
+            .filter { ServiceRemoval.isRemovable($0, home: ctx.home) }
             .map(\.label)
             .sorted()
     }

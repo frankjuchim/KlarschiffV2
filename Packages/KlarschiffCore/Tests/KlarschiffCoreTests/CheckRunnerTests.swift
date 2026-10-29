@@ -22,7 +22,7 @@ private func makeRunner(_ t: FixtureTree, _ findings: [Finding], keep: [FindingI
                         space: DiskSpace? = DiskSpace(free: 500 * gb, total: 1000 * gb),
                         scanners: [any KlarschiffCore.Scanner]? = nil,
                         historyFile: URL? = nil,
-                        orphans: [String]? = nil) async throws -> (CheckRunner, CheckHistory) {
+                        orphans: [String] = []) async throws -> (CheckRunner, CheckHistory) {
     let engine = ScanEngine(scanners: scanners ?? [Stub(id: findings.first?.id.scannerID ?? "x", findings: findings)])
     let kl = KeepList(fileURL: t.root.appending(path: "keep.json"))
     for k in keep { try await kl.add(k) }
@@ -31,12 +31,8 @@ private func makeRunner(_ t: FixtureTree, _ findings: [Finding], keep: [FindingI
         guard let space else { throw CocoaError(.fileReadUnknown) }
         return space
     }
-    if let orphans {
-        return (CheckRunner(engine: engine, keepList: kl, history: h, measureSystemRoots: { _ in roots },
-                            diskSpace: diskSpace, orphanedServices: { _ in orphans }), h)
-    }
-    return (CheckRunner(engine: engine, keepList: kl, history: h,
-                        measureSystemRoots: { _ in roots }, diskSpace: diskSpace), h)
+    return (CheckRunner(engine: engine, keepList: kl, history: h, measureSystemRoots: { _ in roots },
+                        diskSpace: diskSpace, orphanedServices: { _ in orphans }), h)
 }
 
 @Suite struct CheckRunnerTests {
@@ -164,8 +160,12 @@ private func makeRunner(_ t: FixtureTree, _ findings: [Finding], keep: [FindingI
 
     @Test func orphanedServicesDefaultEmpty() async throws {
         let t = try FixtureTree()
-        let (r, _) = try await makeRunner(t, [])
+        let engine = ScanEngine(scanners: [])
+        let r = CheckRunner(engine: engine, keepList: KeepList(fileURL: t.root.appending(path: "keep.json")),
+                            history: CheckHistory(fileURL: t.root.appending(path: "h.json")),
+                            measureSystemRoots: { _ in [:] }, diskSpace: { DiskSpace(free: 1, total: 2) })
         let s = await r.run(.test(root: t.root))
+        // Immer erhoben (nie nil), auch ohne Dienste.
         #expect(s.orphanedServiceLabels == [])
     }
 

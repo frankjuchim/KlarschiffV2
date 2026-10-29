@@ -331,6 +331,43 @@ private let removableIDs: Set<String> = ["user/com.example.useragent", "allUsers
     ])
 }
 
+@Test @MainActor func servicesPlanWithDryRunOptionMakesNoCalls() async {
+    let home = tempHome()
+    let log = ServiceLog()
+    let model = makeModel(home: home, source: ServiceSource(fixtureItems(home)), log: log, dryRun: false)
+    await model.reloadServices()
+    for id in removableIDs { model.toggleService(id) }
+
+    await model.execute(model.makePlan(tab: .services, options: RemovalOptions(dryRun: true)))
+
+    #expect(log.events == ["trash dryRun=true user/com.example.useragent"])
+    #expect(model.lastRemovalWasDryRun)
+}
+
+@Test @MainActor func mixedServicesPlanRejected() async {
+    let home = tempHome()
+    let log = ServiceLog()
+    let model = makeModel(home: home, source: ServiceSource(fixtureItems(home)), log: log)
+    await model.reloadServices()
+    model.toggleService("user/com.example.useragent")
+    let services = model.serviceFindings(for: model.selectedServices)
+    let other = Finding(
+        id: FindingID(scannerID: "appCaches.x", key: "k"), category: .appCaches, title: "Cache", summary: "",
+        risk: .safe, method: .trash,
+        items: [FindingItem(id: "/x", url: home.appending(path: "x"), name: "x", size: 1)],
+        size: 1, blockingApps: [], keepSuggested: false, commandPreview: [], needsFullDiskAccess: false)
+    var selection: [FindingID: Set<String>] = [other.id: ["/x"]]
+    for f in services { selection[f.id] = Set(f.items.map(\.id)) }
+    let plan = RemovalPlan(findings: services + [other], selection: selection, options: RemovalOptions())
+
+    await model.execute(plan)
+
+    #expect(log.events.isEmpty)
+    #expect(model.lastError == AppErrorText.mixedServicesPlan)
+    #expect(model.lastRemoval == nil)
+    #expect(model.isRemoving == false)
+}
+
 // MARK: - Automatischer Check
 
 @Test @MainActor func checkRecordsOrphanedServiceLabels() async {

@@ -21,12 +21,13 @@ public struct CheckSnapshot: Codable, Sendable, Equatable {
     /// IDs, deren Größe nur eine Untergrenze ist oder deren Scanner fehlschlug (unbekannt) – nie für Wachstum verglichen.
     /// Fehlt in älteren Verläufen; dann leer.
     public var lowerBoundIDs: Set<String> = []
-    /// Labels der entfernbaren verwaisten Hintergrunddienste (sortiert). Fehlt in älteren Verläufen; dann leer.
-    public var orphanedServiceLabels: [String] = []
+    /// Labels der entfernbaren verwaisten Hintergrunddienste (sortiert). `nil` = nicht erhoben (ältere Verläufe) –
+    /// dann wird nie verglichen, damit nach dem Update nicht alle bestehenden Dienste als „neu“ gemeldet werden.
+    public var orphanedServiceLabels: [String]?
 
     public init(date: Date, cleanableTotal: Int64, freeBytes: Int64, totalBytes: Int64,
                 sizes: [String: Int64], titles: [String: String], alerts: [CheckAlert],
-                lowerBoundIDs: Set<String> = [], orphanedServiceLabels: [String] = []) {
+                lowerBoundIDs: Set<String> = [], orphanedServiceLabels: [String]? = nil) {
         self.date = date
         self.cleanableTotal = cleanableTotal
         self.freeBytes = freeBytes
@@ -48,6 +49,6 @@ public struct CheckSnapshot: Codable, Sendable, Equatable {
         titles = try c.decode([String: String].self, forKey: .titles)
         alerts = try c.decode([CheckAlert].self, forKey: .alerts)
         lowerBoundIDs = try c.decodeIfPresent(Set<String>.self, forKey: .lowerBoundIDs) ?? []
-        orphanedServiceLabels = try c.decodeIfPresent([String].self, forKey: .orphanedServiceLabels) ?? []
+        orphanedServiceLabels = try c.decodeIfPresent([String].self, forKey: .orphanedServiceLabels)
     }
 }

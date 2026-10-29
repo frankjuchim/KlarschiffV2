@@ -23,6 +23,7 @@ enum AppErrorText {
     static let keepList = "Konnte die Behalten-Liste nicht speichern."
     static let trashFailed = "Papierkorb konnte nicht geleert werden."
     static let dryRunPlan = "Trockenlauf aktiv – ein Plan ohne Trockenlauf wurde nicht ausgeführt."
+    static let mixedServicesPlan = "Hintergrunddienste werden getrennt von anderen Funden entfernt – es wurde nichts ausgeführt."
     static let checkSchedule = "Konnte den automatischen Check nicht anmelden."
 }
 
@@ -489,7 +490,7 @@ final class AppModel {
     /// Nach Bestätigung: frisch einlesen (nur noch Entfernbares aus `ids`), laufende Agents per `launchctl bootout`
     /// stoppen, dann den Plan über den bekannten Weg ausführen (Papierkorb bzw. Admin mit einer Passwortabfrage).
     /// Ein Dienst, dessen bootout fehlschlug, bleibt liegen (seine plist wird nicht entfernt). Trockenlauf: kein
-    /// bootout, kein Admin – nur melden. Ergebnis im Ergebnis-Banner, danach neu einlesen.
+    /// bootout, kein Admin – nur melden. Ergebnis im Ergebnis-Banner; noch unter der Sperre neu einlesen.
     func removeServices(_ ids: Set<String>, dryRun requestedDryRun: Bool = false) async {
         guard !isRemoving, !isScanning, !isMeasuringSystemData, !isChecking, !isLoadingServices, !ids.isEmpty else { return }
         isRemoving = true
@@ -536,11 +537,13 @@ final class AppModel {
         lastRemovalWasDryRun = runDry
         lastRemovalWasLegacy = false
         selectedServices = []
+        // Noch unter der Sperre neu einlesen, damit die Liste nie veraltet stehen bleibt.
+        removalProgress = "Hintergrunddienste werden neu geprüft …"
+        applyServices(await deps.loadServices(ctx), home: ctx.home)
         isRemoving = false
         removalProgress = nil
         trashBytes = await deps.trash(ctx)
         refreshSystemState()
-        await reloadServices()
     }
 
     private static func selectAll(_ findings: [Finding]) -> [FindingID: Set<String>] {
@@ -658,6 +661,10 @@ final class AppModel {
         }
         // Hintergrunddienste brauchen vorher `launchctl bootout` – immer über den eigenen Weg.
         if plan.allSteps.contains(where: { $0.0.category == .services }) {
+            guard plan.allSteps.allSatisfy({ $0.0.category == .services }) else {
+                lastError = AppErrorText.mixedServicesPlan
+                return
+            }
             let ids = plan.allSteps.filter { $0.0.category == .services }.flatMap { $0.1.map(\.id) }
             await removeServices(Set(ids), dryRun: plan.options.dryRun)
             return

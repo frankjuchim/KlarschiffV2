@@ -121,6 +121,13 @@ import Foundation
         #expect(GrowthWatcher.alerts(previous: p, current: snap(orphans: [])).isEmpty)
     }
 
+    @Test func orphanedServicesNoAlertAfterOldHistory() {
+        // Voriger Snapshot aus einer älteren Version (Labels nicht erhoben) → nichts gilt als neu.
+        let old = snap()
+        #expect(old.orphanedServiceLabels == nil)
+        #expect(GrowthWatcher.alerts(previous: old, current: snap(orphans: ["x.y.z"])).isEmpty)
+    }
+
     @Test func orphanedServicesNoAlertOnFirstCheck() {
         #expect(GrowthWatcher.alerts(previous: nil, current: snap(orphans: ["x.y.z"])).isEmpty)
     }
@@ -142,7 +149,7 @@ import Foundation
     @Test func oldHistoryWithoutOrphanedLabelsDecodes() throws {
         let json = #"[{"date":0,"cleanableTotal":1,"freeBytes":2,"totalBytes":3,"sizes":{},"titles":{},"alerts":[{"cleanable":{"total":5}}]}]"#
         let decoded = try JSONDecoder().decode([CheckSnapshot].self, from: Data(json.utf8))
-        #expect(decoded.first?.orphanedServiceLabels == [])
+        #expect(decoded.first?.orphanedServiceLabels == nil)
         #expect(decoded.first?.alerts == [.cleanable(total: 5)])
     }
 
