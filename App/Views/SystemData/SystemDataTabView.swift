@@ -25,7 +25,7 @@ struct SystemDataTabView: View {
                 if SnapshotCard.isVisible(report) {
                     SnapshotCard(report: report)
                 }
-                let byArea = SystemAreaFindings.byArea(model.findings(in: .systemData).flatMap(\.1))
+                let byArea = SystemAreaFindings.byArea(model.findings(in: .systemData).flatMap(\.1), areas: report.areas)
                 ForEach(SystemAreaFindings.sortedBySize(report.areas)) { area in
                     SystemAreaCard(area: area, findings: byArea)
                 }

@@ -54,9 +54,14 @@ struct SnapshotCard: View {
         .glassCard(padding: 24)
     }
 
-    private var intro: String {
+    private var intro: String { Self.intro(report) }
+
+    /// Nennt den Balken-Posten nur, wenn er auch angezeigt wird (Inventar vorhanden, Wert > 0).
+    static func intro(_ report: SystemDataReport) -> String {
+        let base = "Lokale Schnappschüsse belegen Platz, den macOS nicht einzeln ausweist."
+        guard report.inventory != nil, report.unaccounted > 0 else { return base }
         let prefix = report.unaccountedIsUpperBound ? "höchstens " : ""
-        return "Lokale Schnappschüsse belegen Platz, den macOS nicht einzeln ausweist. Er steckt im Posten „Schnappschüsse & nicht zuordenbar“ (\(prefix)\(ByteFormat.string(report.unaccounted)))."
+        return base + " Er steckt im Posten „Schnappschüsse & nicht zuordenbar“ (\(prefix)\(ByteFormat.string(report.unaccounted)))."
     }
 }
 

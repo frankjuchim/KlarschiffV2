@@ -19,10 +19,15 @@ private func report(inventory: VolumeInventoryResult?, unaccounted: Int64 = 0, u
                   APFSVolume(name: "R", role: .recovery, consumed: 1 * gb), APFSVolume(name: "VM", role: .vm, consumed: 4 * gb),
                   APFSVolume(name: "D", role: .data, consumed: 390 * gb)],
         simulatorVolumes: [APFSVolume(name: "iOS Simulator", role: .simulator, consumed: 18 * gb)])
-    let s = VolumeBarCard.segments(report(inventory: inv, unaccounted: 72 * gb, upper: true, userLower: true))
+    let r = report(inventory: inv, unaccounted: 72 * gb, upper: true, userLower: true)
+    let s = VolumeBarCard.segments(r)
     #expect(s.map(\.title) == ["macOS-System", "Auslagerung (VM)", "Deine Daten", "Systembereiche",
-                               "Schnappschüsse & nicht zuordenbar", "Simulator-Volumes", "Frei"])
-    #expect(s.map(\.bytes) == [19 * gb, 4 * gb, 248 * gb, 70 * gb, 72 * gb, 18 * gb, 80 * gb])
+                               "Schnappschüsse & nicht zuordenbar", "Frei"])
+    #expect(s.map(\.bytes) == [19 * gb, 4 * gb, 248 * gb, 70 * gb, 72 * gb, 80 * gb])
+    // Simulator-Volumes nur als Hinweis (stecken schon in Systembereichen).
+    #expect(VolumeBarCard.simulatorNote(r) == "Simulator-Volumes: \(ByteFormat.string(18 * gb)) (bereits in Systembereichen enthalten)")
+    let noSims = VolumeInventoryResult(containerSize: 494 * gb, containerFree: 80 * gb, volumes: inv.volumes, simulatorVolumes: [])
+    #expect(VolumeBarCard.simulatorNote(report(inventory: noSims)) == nil)
     #expect(s[2].sizeText.hasPrefix("mindestens "))
     #expect(s[4].sizeText.hasPrefix("höchstens "))
     #expect(s[0].prefix == nil)
@@ -63,4 +68,43 @@ private func report(inventory: VolumeInventoryResult?, unaccounted: Int64 = 0, u
     #expect(SystemAreaFindings.targetTab(area("opt", .seeFinding(scannerID: "brew.cleanup", tab: .developer))) == .developer)
     #expect(SystemAreaFindings.targetTab(area("var.folders.caches", .keep)) == .developer)
     #expect(SystemAreaFindings.targetTab(area("var.vm", .keep)) == nil)
+}
+
+private let sampleInventory = VolumeInventoryResult(
+    containerSize: 494 * gb, containerFree: 80 * gb,
+    volumes: [APFSVolume(name: "D", role: .data, consumed: 390 * gb)], simulatorVolumes: [])
+
+@MainActor @Test func snapshotIntroNamesSegmentOnlyWhenShown() {
+    let base = "Lokale Schnappschüsse belegen Platz, den macOS nicht einzeln ausweist."
+    #expect(SnapshotCard.intro(report(inventory: nil, unaccounted: 0)) == base)
+    #expect(SnapshotCard.intro(report(inventory: sampleInventory, unaccounted: 0)) == base)
+    let shown = SnapshotCard.intro(report(inventory: sampleInventory, unaccounted: 72 * gb, upper: true))
+    #expect(shown.contains("„Schnappschüsse & nicht zuordenbar“ (höchstens \(ByteFormat.string(72 * gb)))"))
+}
+
+@MainActor @Test func legendDropsEmptySegmentsButKeepsFree() {
+    let segs = [BarSegment(title: "Auslagerung (VM)", bytes: 0, color: .gray, prefix: nil),
+                BarSegment(title: "Deine Daten", bytes: 1, color: .gray, prefix: nil),
+                BarSegment(title: "Frei", bytes: 0, color: .gray, prefix: nil)]
+    #expect(VolumeBarCard.legendSegments(segs).map(\.title) == ["Deine Daten", "Frei"])
+}
+
+@MainActor @Test func unaccountedNoteHiddenWithoutInventory() {
+    var r = report(inventory: nil)
+    r.failures = [ScanFailure(scannerID: "systemdata.unaccounted", message: "zu hoch")]
+    #expect(VolumeBarCard.notes(r).isEmpty)
+    r.inventory = sampleInventory
+    #expect(VolumeBarCard.notes(r) == ["zu hoch"])
+}
+
+@MainActor @Test func macUpdateHintSitsAtMatchingAssetChild() {
+    let f = Finding(id: FindingID(scannerID: "sysdata.macUpdate", key: "all"), category: .systemData, title: "U", summary: "",
+                    risk: .hintOnly, method: .hint(nil), items: [], size: 1, blockingApps: [], keepSuggested: false,
+                    commandPreview: [], needsFullDiskAccess: false)
+    func area(_ id: String, _ children: [SystemArea] = []) -> SystemArea {
+        SystemArea(id: id, url: URL(filePath: "/x"), title: "", summary: "", verdict: .keep, size: 1, isLowerBound: false, children: children)
+    }
+    let withChild = [area("assets", [area("assets.com_apple_MobileAsset_MacSoftwareUpdate")])]
+    #expect(SystemAreaFindings.byArea([f], areas: withChild)["assets.com_apple_MobileAsset_MacSoftwareUpdate"]?.count == 1)
+    #expect(SystemAreaFindings.byArea([f], areas: [area("assets")])["assets"]?.count == 1)
 }

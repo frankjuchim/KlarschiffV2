@@ -49,7 +49,13 @@ struct VolumeBarCard: View {
             if let report = model.systemData {
                 let segments = Self.segments(report)
                 StackedBar(segments: segments)
-                Legend(segments: segments)
+                Legend(segments: Self.legendSegments(segments))
+                if let note = Self.simulatorNote(report) {
+                    Text(note)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
                 if report.inventory == nil {
                     Label(Self.noInventoryNote, systemImage: "exclamationmark.triangle")
                         .font(.callout)
@@ -71,14 +77,13 @@ struct VolumeBarCard: View {
         .glassCard(padding: 28)
     }
 
-    static func timeText(_ date: Date) -> String {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "de_DE")
-        f.dateFormat = "HH:mm"
-        return f.string(from: date)
-    }
+    private static let timeStyle = Date.FormatStyle(locale: Locale(identifier: "de_DE"))
+        .hour(.twoDigits(amPM: .omitted)).minute(.twoDigits)
 
-    /// Segmente laut Spec §4.1; ohne Inventar nur die gemessenen Bereiche.
+    static func timeText(_ date: Date) -> String { date.formatted(timeStyle) }
+
+    /// Segmente laut Spec §4.1, Summe = Container; ohne Inventar nur die gemessenen Bereiche.
+    /// Simulator-Volumes sind Disk-Images in AssetsV2 (schon in „Systembereiche“) und daher kein eigenes Segment.
     static func segments(_ r: SystemDataReport) -> [BarSegment] {
         var out: [BarSegment] = []
         func add(_ title: String, _ bytes: Int64, _ color: Color, prefix: String? = nil) {
@@ -99,10 +104,22 @@ struct VolumeBarCard: View {
         add("Systembereiche", r.systemAreasTotal, Theme.violet)
         add("Schnappschüsse & nicht zuordenbar", r.unaccounted, Color(hex: 0xE8A33D),
             prefix: r.unaccountedIsUpperBound ? "höchstens" : nil)
-        let sims = consumed([.simulator]) + inv.simulatorVolumes.reduce(0) { $0 + $1.consumed }
-        add("Simulator-Volumes", sims, Color(hex: 0x4C8DF6))
         add("Frei", inv.containerFree, Color.primary.opacity(0.08))
         return out
+    }
+
+    /// „Simulator-Volumes: X (bereits in Systembereichen enthalten)“, nur wenn welche existieren.
+    static func simulatorNote(_ r: SystemDataReport) -> String? {
+        guard let inv = r.inventory else { return nil }
+        let sims = inv.volumes.filter { $0.role == .simulator } + inv.simulatorVolumes
+        let bytes = sims.reduce(Int64(0)) { $0 + $1.consumed }
+        guard !sims.isEmpty, bytes > 0 else { return nil }
+        return "Simulator-Volumes: \(ByteFormat.string(bytes)) (bereits in Systembereichen enthalten)"
+    }
+
+    /// Legende ohne leere Segmente; „Frei“ bleibt immer.
+    static func legendSegments(_ segments: [BarSegment]) -> [BarSegment] {
+        segments.filter { $0.bytes > 0 || $0.title == "Frei" }
     }
 
     /// Hinweise aus der Messung, die nicht schon an einem Bereich stehen (Volumes, nicht zugeordnet, Schnappschüsse, Aufräum-Funde).
@@ -113,7 +130,7 @@ struct VolumeBarCard: View {
             "sysdata.macUpdate": "macOS-Update", "system.snapshots": "Schnappschüsse",
         ]
         return r.failures.compactMap { f in
-            if f.scannerID == "systemdata.unaccounted" { return f.message }
+            if f.scannerID == "systemdata.unaccounted" { return r.inventory == nil ? nil : f.message }
             if f.scannerID == "systemdata.volumes" { return r.inventory == nil ? nil : f.message }
             if let label = labels[f.scannerID] { return "\(label): \(f.message)" }
             return nil

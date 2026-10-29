@@ -14,7 +14,16 @@ struct SystemAreaCard: View {
         self.area = area
         self.findings = findings
         // Bereiche mit Aufräum-Karten in Unterbereichen starten aufgeklappt, damit die Karten sichtbar sind.
-        _expanded = State(initialValue: area.children.contains { !(findings[$0.id] ?? []).isEmpty })
+        _expanded = State(initialValue: Self.childrenHaveFindings(area, findings))
+    }
+
+    static func childrenHaveFindings(_ area: SystemArea, _ findings: [String: [Finding]]) -> Bool {
+        area.children.contains { !(findings[$0.id] ?? []).isEmpty }
+    }
+
+    /// IDs der Funde in den Unterbereichen – ändern sie sich, wird neu aufgeklappt.
+    private var childFindingIDs: [FindingID] {
+        area.children.flatMap { (findings[$0.id] ?? []).map(\.id) }
     }
 
     private var children: [SystemArea] { SystemAreaFindings.sortedBySize(area.children) }
@@ -65,6 +74,9 @@ struct SystemAreaCard: View {
             }
         }
         .glassCard(padding: 18)
+        .onChange(of: childFindingIDs) { _, ids in
+            if !ids.isEmpty { withAnimation(.snappy) { expanded = true } }
+        }
     }
 }
 
@@ -176,10 +188,16 @@ enum SystemAreaFindings {
         "sysdata.unifiedLog": "var.db.diagnostics",
         "sysdata.macUpdate": "assets",
     ]
+    /// Der macOS-Update-Hinweis steht bevorzugt beim passenden AssetsV2-Unterbereich.
+    static let macUpdateAreas = ["assets.com_apple_MobileAsset_MacSoftwareUpdate", "assets.com_apple_MobileAsset_MacSplatSoftwareUpdate"]
 
     /// Funde je Bereichs-ID; Funde ohne bekannten Bereich unter dem leeren Schlüssel.
-    static func byArea(_ findings: [Finding]) -> [String: [Finding]] {
-        Dictionary(grouping: findings) { areaForScanner[$0.id.scannerID] ?? "" }
+    static func byArea(_ findings: [Finding], areas: [SystemArea] = []) -> [String: [Finding]] {
+        let assetChildren = Set(areas.first { $0.id == "assets" }?.children.map(\.id) ?? [])
+        let macUpdateArea = macUpdateAreas.first { assetChildren.contains($0) } ?? "assets"
+        return Dictionary(grouping: findings) { f in
+            f.id.scannerID == "sysdata.macUpdate" ? macUpdateArea : (areaForScanner[f.id.scannerID] ?? "")
+        }
     }
 
     /// Tab für „Im Tab … zeigen“: bei „Siehe Fund“ und bei den Benutzer-Caches (Instruments/Clang im Tab Entwickler).
