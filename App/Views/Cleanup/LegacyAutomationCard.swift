@@ -10,6 +10,20 @@ struct LegacyAutomationCard: View {
 
     static let title = "Alte Aufräum-Automatik gefunden"
     static let extrasToggle = "Skript, Protokolle und die leere alte App ebenfalls in den Papierkorb legen"
+
+    /// Häkchen-Text: „die leere alte App“ nur, wenn es sie gibt.
+    nonisolated static func extrasToggleText(_ items: [LegacyItem]) -> String {
+        hasEmptyApp(items) ? extrasToggle : "Skript und Protokolle ebenfalls in den Papierkorb legen"
+    }
+
+    /// Teil des Bestätigungstexts für die Extras – passend zu den gefundenen Teilen.
+    nonisolated static func extrasNoun(_ items: [LegacyItem]) -> String {
+        hasEmptyApp(items) ? "Skript, Protokolle und die leere alte App" : "Skript und Protokolle"
+    }
+
+    nonisolated static func hasEmptyApp(_ items: [LegacyItem]) -> Bool {
+        items.contains { $0.kind == .emptyApp }
+    }
     static let removeButton = "Alte Automatik entfernen"
 
     /// Die Erklärungen aus dem Kern setzen Dateinamen in `Backticks` – als Code darstellen statt wörtlich.
@@ -33,9 +47,8 @@ struct LegacyAutomationCard: View {
             ? "Die alten Hintergrund-Agents werden gestoppt und in den Papierkorb gelegt."
             : "Nichts wird gestoppt."
         if hasExtras {
-            text += includeExtras
-                ? " Skript, Protokolle und die leere alte App landen ebenfalls im Papierkorb."
-                : " Skript, Protokolle und die leere alte App bleiben liegen."
+            let noun = Self.extrasNoun(items)
+            text += includeExtras ? " \(noun) landen ebenfalls im Papierkorb." : " \(noun) bleiben liegen."
         }
         if model.dryRun { text += " Trockenlauf: Es wird nur gemeldet, nichts verändert." }
         return text
@@ -71,7 +84,7 @@ struct LegacyAutomationCard: View {
                     }
                 }
                 if hasExtras {
-                    Toggle(Self.extrasToggle, isOn: $includeExtras)
+                    Toggle(Self.extrasToggleText(items), isOn: $includeExtras)
                         .toggleStyle(.checkbox)
                 }
                 Button {
@@ -80,7 +93,7 @@ struct LegacyAutomationCard: View {
                     Label(Self.removeButton, systemImage: "trash")
                 }
                 .buttonStyle(.glass)
-                .disabled(busy)
+                .disabled(busy || !AppModel.legacyWouldRemove(items, includeExtras: includeExtras))
                 .padding(.top, 2)
             }
         }

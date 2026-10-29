@@ -47,6 +47,8 @@
 - [ ] Signierte App: Check auf „Wöchentlich“, unter Anmeldeobjekte erlauben, Mitteilungen zulassen.
 - [ ] „Jetzt prüfen“ ausführen; Einstellungen in `--dry-run` ansehen.
 - [ ] „Alte Automatik entfernen“ echt ausführen und mit `launchctl list | grep -E "frankjuchim|klarschiff"` prüfen.
+- [ ] Beim ersten echten Hintergrund-Check auf Datenschutz-Abfragen achten.
+- [ ] Die alte App Klarschiff 1 (`/Applications/Klarschiff.app`) existiert noch; sie lässt sich über den Fund unter „Apps“ oder von Hand entfernen.
 
 ### Bekannte Abweichungen Teilprojekt 3
 - Der LaunchAgent des Checks lässt sich ohne Signatur/Team nicht registrieren; die Registrierung und die Hintergrundausführung sind daher nur mit der signierten App prüfbar (hier nur `--check` direkt aufgerufen).

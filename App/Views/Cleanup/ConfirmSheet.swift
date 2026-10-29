@@ -75,7 +75,7 @@ struct ConfirmSheet: View {
                 }
                 .buttonStyle(GradientButtonStyle())
                 .keyboardShortcut(Self.allowsDefaultAction(plan) ? .defaultAction : nil)
-                .disabled(groups.isEmpty || model.isScanning || model.isRemoving || model.isMeasuringSystemData || (needsAck && !acknowledged))
+                .disabled(groups.isEmpty || model.isScanning || model.isRemoving || model.isMeasuringSystemData || model.isChecking || (needsAck && !acknowledged))
             }
         }
         .padding(24)

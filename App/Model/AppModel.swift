@@ -76,6 +76,8 @@ final class AppModel {
     /// War der Lauf hinter `lastRemoval` ein Trockenlauf? Beim Ausführen festgehalten, damit ein späteres
     /// Umschalten die Ergebnis-Anzeige nicht umetikettiert.
     var lastRemovalWasDryRun = false
+    /// War der Lauf hinter `lastRemoval` die Entfernung der alten Automatik? Dann zeigt das Banner einen Erfolgssatz statt Bytes.
+    var lastRemovalWasLegacy = false
     /// Läuft gerade eine Entfernung (Aufräumen oder Papierkorb leeren)? Sperrt Scan und weitere Entfernungen.
     var isRemoving = false
     var removalProgress: String?
@@ -95,6 +97,8 @@ final class AppModel {
     /// Mitteilungen ausdrücklich abgelehnt – der Check meldet sich nicht.
     var notificationsDenied: Bool { notificationStatus == .denied }
     var agentStatus: AgentStatus = .notRegistered
+    /// Letzter Fehler beim An-/Abmelden des Checks – angezeigt in den Einstellungen; nil nach Erfolg.
+    var checkScheduleError: String?
     /// Überbleibsel der alten Aufräum-Automatik (Karte oben im Tab „Speicher“, solange etwas existiert).
     var legacyItems: [LegacyItem] = []
     var showsLegacyCard: Bool { !legacyItems.isEmpty }
@@ -118,6 +122,8 @@ final class AppModel {
     @ObservationIgnored private var systemFindingsByID: [FindingID: Finding] = [:]
     @ObservationIgnored private var hasStartedSystemMeasurement = false
     @ObservationIgnored private var systemGeneration = 0
+    /// Läuft gerade ein An-/Abmelden? Weitere Wechsel werden nur gemerkt; der laufende übernimmt danach die aktuelle Wahl.
+    @ObservationIgnored private var isApplyingSchedule = false
     /// Anzeigenamen (Fund-Titel, Item-Namen) des zuletzt ausgeführten Plans – bleiben auch nach dem Neu-Scan lesbar.
     @ObservationIgnored private var removalLabels: [FindingID: (title: String, items: [String: String])] = [:]
 
@@ -134,24 +140,51 @@ final class AppModel {
 
     // MARK: - Automatischer Check
 
-    /// Meldet den passenden LaunchAgent an (die anderen ab) und merkt sich die Wahl. Nur hier – beim Einschalten,
-    /// mit offenem Fenster – wird nach der Mitteilungs-Erlaubnis gefragt, nie im Hintergrund. Fehler landen in `lastError`, der Status in `agentStatus`.
+    /// Meldet den passenden LaunchAgent an (die anderen ab) und merkt sich die Wahl. Erst anmelden, danach – nur beim
+    /// Einschalten, mit offenem Fenster – nach der Mitteilungs-Erlaubnis fragen (nie im Hintergrund), damit die Frage
+    /// die Anmeldung nicht aufhält. Wechsel werden serialisiert. Fehler landen in `checkScheduleError` (Einstellungen)
+    /// und `lastError`, der Status in `agentStatus`.
     func setCheckSchedule(_ schedule: CheckSchedule) async {
         checkSchedule = schedule
         defaults.set(schedule.rawValue, forKey: Self.checkScheduleDefaultsKey)
-        if schedule != .off {
-            if await deps.notifier.requestAuthorization() {
-                notificationStatus = .authorized
-            } else {
-                await refreshNotificationStatus()
+        await applySchedule(askNotifications: true)
+    }
+
+    /// Start der normalen Oberfläche: Zeitplan gewählt, aber der Agent ist nicht angemeldet → einmal neu anmelden
+    /// (ohne Mitteilungs-Frage).
+    func reapplyScheduleIfNeeded() async {
+        guard checkSchedule != .off, scheduler.status(for: checkSchedule) == .notRegistered else { return }
+        await applySchedule(askNotifications: false)
+    }
+
+    /// Wendet so lange die aktuelle Wahl an, bis sie sich während der Wartezeiten nicht mehr geändert hat.
+    /// Läuft schon ein Anwenden, übernimmt dieses die neue Wahl.
+    private func applySchedule(askNotifications: Bool) async {
+        guard !isApplyingSchedule else { return }
+        isApplyingSchedule = true
+        defer { isApplyingSchedule = false }
+        var applied: CheckSchedule?
+        var asked = false
+        while applied != checkSchedule {
+            let target = checkSchedule
+            do {
+                try await scheduler.apply(target)
+                checkScheduleError = nil
+            } catch {
+                checkScheduleError = AppErrorText.checkSchedule
+                lastError = AppErrorText.checkSchedule
+            }
+            applied = target
+            refreshAgentStatus()
+            if askNotifications, !asked, target != .off, target == checkSchedule {
+                asked = true
+                if await deps.notifier.requestAuthorization() {
+                    notificationStatus = .authorized
+                } else {
+                    await refreshNotificationStatus()
+                }
             }
         }
-        do {
-            try await scheduler.apply(schedule)
-        } catch {
-            lastError = AppErrorText.checkSchedule
-        }
-        refreshAgentStatus()
     }
 
     func refreshAgentStatus() {
@@ -208,39 +241,60 @@ final class AppModel {
         legacyItems = await LegacyAutomation.detect(deps.makeContext(false))
     }
 
-    /// Nach Bestätigung: geladene Agents per `launchctl bootout` stoppen, dann über den bekannten Entfernen-Weg
-    /// (RemovalRunner → TrashRemover, SafetyGuard) in den Papierkorb legen. Trockenlauf: kein bootout, nur melden.
+    /// Nach Bestätigung: zuerst neu erkennen, dann geladene Agents per `launchctl bootout` stoppen und über den
+    /// bekannten Entfernen-Weg (RemovalRunner → TrashRemover, SafetyGuard) in den Papierkorb legen. Ein Agent, dessen
+    /// bootout fehlschlug, bleibt liegen (die Karte zeigt ihn weiter). Trockenlauf: kein bootout, nur melden.
     /// Ergebnis im Ergebnis-Banner, danach neu erkennen.
     func removeLegacy(includeExtras: Bool) async {
         guard !isRemoving, !isScanning, !isMeasuringSystemData, !isChecking, !legacyItems.isEmpty else { return }
         isRemoving = true
         removalProgress = "Alte Automatik wird entfernt …"
+        await detectLegacy()
+        let items = legacyItems
+        guard Self.legacyWouldRemove(items, includeExtras: includeExtras) else {
+            isRemoving = false
+            removalProgress = nil
+            return
+        }
         let runDry = dryRun
         let ctx = deps.makeContext(false)
-        let items = legacyItems
-        let finding = LegacyAutomation.removalFinding(items, ctx: ctx, includeExtras: includeExtras)
-        removalLabels = [finding.id: (
-            finding.title,
-            Dictionary(items.map { ($0.id, $0.title) }, uniquingKeysWith: { first, _ in first }))]
 
         let bootouts = await LegacyAutomation.bootout(items, runner: ctx.runner, dryRun: runDry)
-        let plan = RemovalPlan(
-            findings: [finding], selection: [finding.id: Set(finding.items.map(\.id))],
-            options: RemovalOptions(dryRun: runDry))
-        let trashed = await deps.runner.run(plan) { _ in }
         let bootoutFailures = bootouts.filter {
             if case .failed = $0.outcome { return true }
             return false
+        }
+        let stillRunning = Set(bootoutFailures.compactMap(\.itemID))
+        let finding = LegacyAutomation.removalFinding(
+            items.filter { !stillRunning.contains($0.id) }, ctx: ctx, includeExtras: includeExtras)
+        removalLabels = [finding.id: (
+            finding.title,
+            Dictionary(items.map { ($0.id, $0.title) }, uniquingKeysWith: { first, _ in first }))]
+        var trashed = RemovalReport(results: [], freedBytes: 0, failures: [])
+        if !finding.items.isEmpty {
+            let plan = RemovalPlan(
+                findings: [finding], selection: [finding.id: Set(finding.items.map(\.id))],
+                options: RemovalOptions(dryRun: runDry))
+            trashed = await deps.runner.run(plan) { _ in }
         }
         lastRemoval = RemovalReport(
             results: bootouts + trashed.results, freedBytes: trashed.freedBytes,
             failures: bootoutFailures + trashed.failures)
         lastRemovalWasDryRun = runDry
+        lastRemovalWasLegacy = true
         isRemoving = false
         removalProgress = nil
         trashBytes = await deps.trash(ctx)
         refreshSystemState()
         await detectLegacy()
+    }
+
+    /// Würde „Alte Automatik entfernen“ etwas tun? Agents immer, alles andere nur mit Häkchen.
+    nonisolated static func legacyWouldRemove(_ items: [LegacyItem], includeExtras: Bool) -> Bool {
+        items.contains { item in
+            if case .agent = item.kind { return true }
+            return includeExtras
+        }
     }
 
     /// Klick auf eine Check-Mitteilung: Ziel-Tab aus `userInfo["tab"]` (`AppTab.rawValue`); Unbekanntes ignorieren.
@@ -477,6 +531,7 @@ final class AppModel {
         }
         lastRemoval = result
         lastRemovalWasDryRun = plan.options.dryRun
+        lastRemovalWasLegacy = false
         isRemoving = false
         removalProgress = nil
         refreshSystemState()
@@ -499,6 +554,7 @@ final class AppModel {
         do {
             lastRemoval = try await deps.emptyTrash(runDry)
             lastRemovalWasDryRun = runDry
+            lastRemovalWasLegacy = false
         } catch let error as EmptyTrashError {
             lastError = error.message
         } catch {

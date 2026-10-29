@@ -42,7 +42,7 @@ struct KeepSection: View {
                             Task { await model.unkeep(finding.id) }
                         }
                         .buttonStyle(.glass)
-                        .disabled(model.isScanning || model.isRemoving)
+                        .disabled(model.isScanning || model.isRemoving || model.isChecking)
                     }
                 }
             }

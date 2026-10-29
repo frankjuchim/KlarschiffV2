@@ -63,12 +63,13 @@ enum BackgroundCheck {
     }
 
     /// Produktion: Wurzel-Systembereiche ohne Home und ohne Aufräum-Scanner messen; „nicht zuordenbar“ zählt nicht.
-    static func measureSystemRootsLive(_ ctx: ScanContext) async -> [String: (title: String, size: Int64)] {
+    /// Nur teilweise messbare Bereiche (`isLowerBound`) werden als Untergrenze weitergegeben – nie für Wachstum verglichen.
+    static func measureSystemRootsLive(_ ctx: ScanContext) async -> [String: (title: String, size: Int64, isLowerBound: Bool)] {
         let report = await SystemDataScanner(cleanupScanners: [], measureUserData: false).scan(ctx) { _, _ in }
-        var roots: [String: (title: String, size: Int64)] = [:]
+        var roots: [String: (title: String, size: Int64, isLowerBound: Bool)] = [:]
         for area in report.areas {
             guard let size = area.size else { continue }
-            roots[area.id] = (area.title, size)
+            roots[area.id] = (area.title, size, area.isLowerBound)
         }
         return roots
     }

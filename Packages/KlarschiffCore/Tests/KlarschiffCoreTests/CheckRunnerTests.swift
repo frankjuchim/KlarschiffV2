@@ -18,15 +18,19 @@ private struct Stub: KlarschiffCore.Scanner {
 private let gb: Int64 = 1_000_000_000
 
 private func makeRunner(_ t: FixtureTree, _ findings: [Finding], keep: [FindingID] = [],
-                        roots: [String: (title: String, size: Int64)] = [:],
-                        space: DiskSpace = DiskSpace(free: 500 * gb, total: 1000 * gb),
+                        roots: [String: (title: String, size: Int64, isLowerBound: Bool)] = [:],
+                        space: DiskSpace? = DiskSpace(free: 500 * gb, total: 1000 * gb),
+                        scanners: [any KlarschiffCore.Scanner]? = nil,
                         historyFile: URL? = nil) async throws -> (CheckRunner, CheckHistory) {
-    let engine = ScanEngine(scanners: [Stub(id: findings.first?.id.scannerID ?? "x", findings: findings)])
+    let engine = ScanEngine(scanners: scanners ?? [Stub(id: findings.first?.id.scannerID ?? "x", findings: findings)])
     let kl = KeepList(fileURL: t.root.appending(path: "keep.json"))
     for k in keep { try await kl.add(k) }
     let h = CheckHistory(fileURL: historyFile ?? t.root.appending(path: "h.json"))
     return (CheckRunner(engine: engine, keepList: kl, history: h,
-                        measureSystemRoots: { _ in roots }, diskSpace: { space }), h)
+                        measureSystemRoots: { _ in roots }, diskSpace: {
+                            guard let space else { throw CocoaError(.fileReadUnknown) }
+                            return space
+                        }), h)
 }
 
 @Suite struct CheckRunnerTests {
@@ -34,7 +38,7 @@ private func makeRunner(_ t: FixtureTree, _ findings: [Finding], keep: [FindingI
         let t = try FixtureTree()
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let (r, h) = try await makeRunner(t, [finding("appCaches.x", key: "a", size: 3 * gb), finding("xcode.dd", key: "b", cat: .xcode, size: 2 * gb)],
-                                          roots: ["apps": (title: "Systemprogramme", size: 7 * gb)])
+                                          roots: ["apps": (title: "Systemprogramme", size: 7 * gb, isLowerBound: false)])
         let s = await r.run(.test(root: t.root, now: now))
         #expect(s.date == now)
         #expect(s.cleanableTotal == 5 * gb)
@@ -67,6 +71,52 @@ private func makeRunner(_ t: FixtureTree, _ findings: [Finding], keep: [FindingI
         let s = await r.run(.test(root: t.root))
         #expect(s.alerts.first == .growth(id: "xcode.dd/a", title: "T-a", from: 2 * gb, to: 40 * gb))
         #expect(await h.all().count == 2)
+    }
+
+    @Test func keptAndSizelessNotCompared() async throws {
+        let t = try FixtureTree()
+        let kept = finding("appCaches.x", key: "kept", size: 40 * gb)
+        let (r, h) = try await makeRunner(t, [kept, finding("appCaches.x", key: "nil", size: nil)], keep: [kept.id])
+        try await h.append(CheckSnapshot(date: Date(timeIntervalSince1970: 1_000), cleanableTotal: 0, freeBytes: 500 * gb,
+                                         totalBytes: 1000 * gb, sizes: ["appCaches.x/kept": 1 * gb], titles: [:], alerts: []))
+        let s = await r.run(.test(root: t.root))
+        #expect(s.sizes["appCaches.x/kept"] == nil)
+        #expect(s.sizes["appCaches.x/nil"] == nil)
+        #expect(!s.alerts.contains { if case .growth = $0 { true } else { false } })
+    }
+
+    @Test func lowerBoundRootLaterCompleteNoAlert() async throws {
+        let t = try FixtureTree()
+        let file = t.root.appending(path: "h.json")
+        let (r1, _) = try await makeRunner(t, [], roots: ["library": (title: "Bibliothek", size: 1 * gb, isLowerBound: true)],
+                                           historyFile: file)
+        let s1 = await r1.run(.test(root: t.root, now: Date(timeIntervalSince1970: 1_000)))
+        #expect(s1.lowerBoundIDs == ["systemdata.library"])
+        let (r2, _) = try await makeRunner(t, [], roots: ["library": (title: "Bibliothek", size: 30 * gb, isLowerBound: false)],
+                                           historyFile: file)
+        let s2 = await r2.run(.test(root: t.root, now: Date(timeIntervalSince1970: 2_000)))
+        #expect(s2.alerts.isEmpty)
+    }
+
+    @Test func failedScannerRecordedAsUnknown() async throws {
+        struct Failing: KlarschiffCore.Scanner {
+            let id = "broken.s"
+            func scan(_ ctx: ScanContext) async throws -> [Finding] { throw CocoaError(.fileReadUnknown) }
+        }
+        let t = try FixtureTree()
+        let (r, _) = try await makeRunner(t, [], scanners: [Failing()])
+        let s = await r.run(.test(root: t.root))
+        #expect(s.lowerBoundIDs.contains("broken.s"))
+        #expect(s.sizes.isEmpty)
+    }
+
+    @Test func diskSpaceFailureNotAppended() async throws {
+        let t = try FixtureTree()
+        let (r, h) = try await makeRunner(t, [finding("appCaches.x", size: 2 * gb)], space: nil)
+        let s = await r.run(.test(root: t.root))
+        #expect(s.cleanableTotal == 2 * gb)
+        #expect(s.totalBytes == 0)
+        #expect(await h.all().isEmpty)
     }
 
     @Test func historyWriteFailureStillReturnsSnapshot() async throws {

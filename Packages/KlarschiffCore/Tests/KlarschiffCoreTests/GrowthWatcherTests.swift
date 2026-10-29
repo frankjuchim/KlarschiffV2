@@ -11,7 +11,6 @@ import Foundation
                       sizes: sizes, titles: Dictionary(uniqueKeysWithValues: sizes.keys.map { ($0, "T-\($0)") }),
                       alerts: [])
     }
-    static var gbv: Int64 { gb }
 
     @Test func firstCheckNoGrowth() {
         let a = GrowthWatcher.alerts(previous: nil, current: snap(sizes: ["a/x": 50 * Self.gb]))
@@ -38,6 +37,33 @@ import Foundation
         let a = GrowthWatcher.alerts(previous: p, current: c)
         #expect(a.count == 1)
         if case .growth(let id, _, _, _) = a[0] { #expect(id == "a") } else { Issue.record("kein growth") }
+    }
+
+    @Test func doublingBoundaryExact() {
+        // Zuwachs genau 2 GB: neu == 2 × alt → nicht verdoppelt; neu == 2 × alt + 1 → meldet.
+        let p = snap(sizes: ["a": 2_000_000_000, "b": 2_000_000_001])
+        let c = snap(sizes: ["a": 4_000_000_000, "b": 4_000_000_003])
+        let a = GrowthWatcher.alerts(previous: p, current: c)
+        #expect(a == [.growth(id: "b", title: "T-b", from: 2_000_000_001, to: 4_000_000_003)])
+    }
+
+    @Test func lowerBoundOrUnknownNeverCompared() {
+        let g = Self.gb
+        var p = snap(sizes: ["systemdata.lib": 10 * g, "sc/x": 1 * g, "other": 1 * g])
+        p.lowerBoundIDs = ["systemdata.lib"]
+        // Untergrenze wird später vollständig gemessen → kein Alarm.
+        #expect(GrowthWatcher.alerts(previous: p, current: snap(sizes: ["systemdata.lib": 40 * g])).isEmpty)
+        // Aktuell Untergrenze → kein Alarm.
+        var c = snap(sizes: ["other": 40 * g, "sc/x": 40 * g])
+        c.lowerBoundIDs = ["other", "sc"]
+        #expect(GrowthWatcher.alerts(previous: p, current: c).isEmpty)
+    }
+
+    @Test func oldHistoryWithoutLowerBoundsDecodes() throws {
+        let json = #"[{"date":0,"cleanableTotal":1,"freeBytes":2,"totalBytes":3,"sizes":{"a":1},"titles":{"a":"A"},"alerts":[]}]"#
+        let decoded = try JSONDecoder().decode([CheckSnapshot].self, from: Data(json.utf8))
+        #expect(decoded.first?.lowerBoundIDs == [])
+        #expect(decoded.first?.sizes == ["a": 1])
     }
 
     @Test func newIDNoGrowth() {

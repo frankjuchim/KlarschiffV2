@@ -10,7 +10,7 @@ struct SummaryCard: View {
 
     static let ruleText = "Vorausgewählt ist nur, was sich von selbst wieder aufbaut. Großes wird direkt gelöscht, alles andere landet im Papierkorb."
 
-    private var busy: Bool { model.isScanning || model.isRemoving }
+    private var busy: Bool { model.isScanning || model.isRemoving || model.isChecking }
 
     private var hasSelection: Bool {
         model.findings(in: tab).contains { _, findings in findings.contains { model.isSelected($0.id) } }

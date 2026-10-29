@@ -8,7 +8,7 @@ struct VolumeBarCard: View {
     static let explanation = "Die Zahl ‚Systemdaten‘ in den Systemeinstellungen entspricht ungefähr Systembereiche + Schnappschüsse + Auslagerung. macOS rechnet etwas anders – kleine Abweichungen sind normal."
     static let noInventoryNote = "Datenträger konnte nicht gelesen werden – der Balken zeigt nur die gemessenen Bereiche."
 
-    private var busy: Bool { model.isScanning || model.isRemoving || model.isMeasuringSystemData }
+    private var busy: Bool { model.isScanning || model.isRemoving || model.isMeasuringSystemData || model.isChecking }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -40,7 +40,7 @@ struct VolumeBarCard: View {
                 }
                 .tint(Theme.violet)
             } else if model.systemData == nil {
-                Text(model.isScanning || model.isRemoving
+                Text(model.isScanning || model.isRemoving || model.isChecking
                      ? "Die Messung startet, sobald Klarschiff 2 mit dem Scannen fertig ist."
                      : "Noch nicht gemessen.")
                     .foregroundStyle(.secondary)

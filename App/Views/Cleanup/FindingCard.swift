@@ -12,7 +12,7 @@ struct FindingCard: View {
     @State private var expanded = false
     @State private var showCommand = false
 
-    private var busy: Bool { model.isScanning || model.isRemoving }
+    private var busy: Bool { model.isScanning || model.isRemoving || model.isChecking }
     private var isHint: Bool { AppModel.isHint(finding) }
     /// Ohne Vollzugriff nicht messbar: keine Auswahl, Hinweis statt Größe.
     private var lacksAccess: Bool { Self.lacksAccess(finding) }
@@ -239,7 +239,7 @@ struct BlockingWarning: View {
             }
             .controlSize(.small)
             .buttonStyle(.glass)
-            .disabled(model.isScanning || model.isRemoving)
+            .disabled(model.isScanning || model.isRemoving || model.isChecking)
             .help(apps.map(\.displayName).joined(separator: ", "))
         }
     }

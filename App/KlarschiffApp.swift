@@ -198,6 +198,8 @@ struct RootView: View {
             didStart = true
             model.refreshSystemState()
             model.refreshAgentStatus()
+            // Zeitplan gewählt, Agent aber nicht (mehr) angemeldet → einmal neu anmelden.
+            await model.reapplyScheduleIfNeeded()
             await model.loadCheckHistory()
             await model.refreshNotificationStatus()
             // Alte Automatik sofort zeigen, nicht erst nach dem (langen) ersten Scan.

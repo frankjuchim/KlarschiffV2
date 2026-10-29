@@ -7,7 +7,7 @@ struct SystemDataTabView: View {
     @Environment(AppModel.self) private var model
     @State private var showConfirm = false
 
-    private var busy: Bool { model.isScanning || model.isRemoving }
+    private var busy: Bool { model.isScanning || model.isRemoving || model.isChecking }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -68,7 +68,7 @@ private struct SystemDataSummaryBar: View {
     let onCleanup: () -> Void
     @Environment(AppModel.self) private var model
 
-    private var busy: Bool { model.isScanning || model.isRemoving || model.isMeasuringSystemData }
+    private var busy: Bool { model.isScanning || model.isRemoving || model.isMeasuringSystemData || model.isChecking }
 
     private var hasSelection: Bool {
         model.findings(in: .systemData).contains { _, findings in findings.contains { model.isSelected($0.id) } }

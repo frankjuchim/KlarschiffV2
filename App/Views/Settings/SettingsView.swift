@@ -36,6 +36,11 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
+                if let error = model.checkScheduleError {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 agentHint
                 notificationHint
 

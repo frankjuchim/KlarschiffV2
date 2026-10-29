@@ -34,6 +34,22 @@ import Foundation
         #expect(await CheckHistory(fileURL: t.root.appending(path: "none.json")).all().isEmpty)
     }
 
+    @Test func corruptHistoryMovedAsideBeforeWrite() async throws {
+        let t = try FixtureTree()
+        let file = t.root.appending(path: "history.json")
+        let backup = t.root.appending(path: "history.json.bad")
+        try Data("old bad".utf8).write(to: backup)
+        try Data("{not json".utf8).write(to: file)
+        let h = CheckHistory(fileURL: file)
+        try await h.append(snap(1))
+        #expect(try Data(contentsOf: backup) == Data("{not json".utf8))
+        #expect(await h.all() == [snap(1)])
+        // Gültige Datei: kein neues Backup.
+        try await h.append(snap(2))
+        #expect(try Data(contentsOf: backup) == Data("{not json".utf8))
+        #expect(await h.all().count == 2)
+    }
+
     @Test func concurrentAppendsKeepValidFile() async throws {
         let t = try FixtureTree()
         let file = t.root.appending(path: "history.json")

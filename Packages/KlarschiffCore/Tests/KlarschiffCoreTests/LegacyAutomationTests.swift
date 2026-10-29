@@ -27,11 +27,43 @@ import Testing
         #expect(items.contains { if case .script = $0.kind { true } else { false } })
         #expect(items.contains { if case .emptyApp = $0.kind { true } else { false } })
         #expect(items.filter { if case .log = $0.kind { true } else { false } }.count == 2)
-        let script = items.first { if case .agent(let l) = $0.kind { l == cleanupLabel } else { false } }!
+        let script = items.first { if case .script = $0.kind { true } else { false } }!
         #expect(script.explanation.contains("leert jeden Monatsersten automatisch deine Caches"))
-        let check = items.first { if case .agent(let l) = $0.kind { l == checkLabel } else { false } }!
-        #expect(check.explanation.contains("zeigt auf eine App, die es nicht mehr gibt"))
+        let app = items.first { if case .emptyApp = $0.kind { true } else { false } }!
+        #expect(app.explanation.contains("zeigt auf eine App, die es nicht mehr gibt"))
         #expect(items.allSatisfy { !$0.isLoaded })
+        #expect(occurrences("leert jeden Monatsersten", in: items) == 1)
+        #expect(occurrences("zeigt auf eine App, die es nicht mehr gibt", in: items) == 1)
+    }
+
+    func occurrences(_ needle: String, in items: [LegacyItem]) -> Int {
+        items.reduce(0) { $0 + $1.explanation.components(separatedBy: needle).count - 1 }
+    }
+
+    func agent(_ label: String, _ items: [LegacyItem]) -> LegacyItem? {
+        items.first { if case .agent(let l) = $0.kind { l == label } else { false } }
+    }
+
+    @Test func sentencesOnAgentsWhenNoScriptAndNoApp() async throws {
+        let t = try FixtureTree()
+        try t.file("home/Library/LaunchAgents/com.frankjuchim.cleanup.plist", bytes: 10)
+        try t.file("home/Library/LaunchAgents/de.bodendiek.klarschiff.check.plist", bytes: 10)
+        let items = await LegacyAutomation.detect(ScanContext.test(root: t.root), uid: 501)
+        #expect(agent(cleanupLabel, items)?.explanation.contains("leert jeden Monatsersten automatisch deine Caches") == true)
+        #expect(agent(checkLabel, items)?.explanation.hasSuffix("Der alte Klarschiff-Check zeigt auf eine App, die es nicht mehr gibt.") == true)
+        #expect(occurrences("leert jeden Monatsersten", in: items) == 1)
+        #expect(occurrences("zeigt auf eine App", in: items) == 1)
+    }
+
+    @Test func oldAppStillInstalledChangesCheckSentence() async throws {
+        let t = try FixtureTree()
+        try t.file("home/Library/LaunchAgents/de.bodendiek.klarschiff.check.plist", bytes: 10)
+        try t.file("Applications/Klarschiff.app/Contents/MacOS/Klarschiff", bytes: 10)
+        let items = await LegacyAutomation.detect(ScanContext.test(root: t.root), uid: 501)
+        #expect(items.count == 1)
+        let check = try #require(agent(checkLabel, items))
+        #expect(check.explanation == "Startet sonntags einen Check. Der Check von Klarschiff 1 startet weiterhin jeden Sonntag. Klarschiff 2 übernimmt diese Aufgabe – der alte Check wird nicht mehr gebraucht.")
+        #expect(!check.explanation.contains("nicht mehr gibt"))
     }
 
     @Test func detectsPartial() async throws {

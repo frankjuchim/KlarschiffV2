@@ -66,11 +66,15 @@ private final class EventLog: Sendable {
     func add(_ e: String) { store.withLock { $0.append(e) } }
 }
 
-/// `launchctl print` → geladen (Exit 0); `bootout` → Erfolg. Alles wird protokolliert.
+/// `launchctl print` → geladen (Exit 0); `bootout` → Erfolg (außer für `failingBootout`). Alles wird protokolliert.
 private struct RecordingCommands: CommandRunner {
     let log: EventLog
+    var failingBootout: String?
     func run(_ executable: String, _ arguments: [String], timeout: Duration, environment: [String: String]) async throws -> CommandResult {
         log.add(([executable] + arguments).joined(separator: " "))
+        if let failingBootout, arguments.first == "bootout", arguments.last?.hasSuffix("/\(failingBootout)") == true {
+            return CommandResult(exitCode: 5, stdout: "", stderr: "Input/output error")
+        }
         return CommandResult(exitCode: 0, stdout: "", stderr: "")
     }
 }
@@ -135,13 +139,13 @@ private func tempDefaults() -> UserDefaults {
 }
 
 @MainActor
-private func makeModel(home: URL, log: EventLog, dryRun: Bool) -> AppModel {
+private func makeModel(home: URL, log: EventLog, dryRun: Bool, failingBootout: String? = nil) -> AppModel {
     let disk: @Sendable () throws -> DiskSpace = { DiskSpace(free: 100, total: 1_000) }
     let runner = RemovalRunner(
         trash: FixtureTrash(log: log), delete: NoRemover(), tool: NoRemover(),
         admin: AdminRemover(executor: NoopExecutor(), guard: SafetyGuard.production()),
         runningApps: NoRunningApps(), diskSpace: disk)
-    let commands = RecordingCommands(log: log)
+    let commands = RecordingCommands(log: log, failingBootout: failingBootout)
     let deps = AppDependencies(
         engine: ScanEngine(scanners: []),
         keepList: KeepList(fileURL: home.appending(path: "keep.json")),
@@ -172,13 +176,19 @@ private func makeModel(home: URL, log: EventLog, dryRun: Bool) -> AppModel {
     return AppModel(dependencies: deps, defaults: tempDefaults())
 }
 
+private func removeHome(_ home: URL) { try? FileManager.default.removeItem(at: home) }
+
 @Test @MainActor func legacyCardHiddenWhenNothingFound() async throws {
-    let empty = makeModel(home: try fixtureHome(withLegacy: false), log: EventLog(), dryRun: true)
+    let emptyHome = try fixtureHome(withLegacy: false)
+    defer { removeHome(emptyHome) }
+    let empty = makeModel(home: emptyHome, log: EventLog(), dryRun: true)
     await empty.detectLegacy()
     #expect(empty.legacyItems.isEmpty)
     #expect(empty.showsLegacyCard == false)
 
-    let found = makeModel(home: try fixtureHome(withLegacy: true), log: EventLog(), dryRun: true)
+    let foundHome = try fixtureHome(withLegacy: true)
+    defer { removeHome(foundHome) }
+    let found = makeModel(home: foundHome, log: EventLog(), dryRun: true)
     await found.detectLegacy()
     #expect(Set(found.legacyItems.map(\.id)) == Set(LegacyAutomation.labels + ["script", "log"]))
     #expect(found.showsLegacyCard)
@@ -187,6 +197,7 @@ private func makeModel(home: URL, log: EventLog, dryRun: Bool) -> AppModel {
 @Test @MainActor func removeLegacyBootoutThenTrashInOrder() async throws {
     let log = EventLog()
     let home = try fixtureHome(withLegacy: true)
+    defer { removeHome(home) }
     let model = makeModel(home: home, log: log, dryRun: false)
     await model.detectLegacy()
     let uid = getuid()
@@ -209,11 +220,14 @@ private func makeModel(home: URL, log: EventLog, dryRun: Bool) -> AppModel {
     // Ergebnis-Banner kennt die Namen.
     let bootout = try #require(model.lastRemoval?.results.first)
     #expect(model.label(for: bootout) == "Alte Aufräum-Automatik – Hintergrund-Agent com.frankjuchim.cleanup")
+    #expect(model.lastRemovalWasLegacy)
 }
 
 @Test @MainActor func removeLegacyWithoutExtrasKeepsScript() async throws {
     let log = EventLog()
-    let model = makeModel(home: try fixtureHome(withLegacy: true), log: log, dryRun: false)
+    let home = try fixtureHome(withLegacy: true)
+    defer { removeHome(home) }
+    let model = makeModel(home: home, log: log, dryRun: false)
     await model.detectLegacy()
 
     await model.removeLegacy(includeExtras: false)
@@ -225,6 +239,7 @@ private func makeModel(home: URL, log: EventLog, dryRun: Bool) -> AppModel {
 @Test @MainActor func removeLegacyDryRunNoCalls() async throws {
     let log = EventLog()
     let home = try fixtureHome(withLegacy: true)
+    defer { removeHome(home) }
     let model = makeModel(home: home, log: log, dryRun: true)
     await model.detectLegacy()
 
@@ -241,7 +256,9 @@ private func makeModel(home: URL, log: EventLog, dryRun: Bool) -> AppModel {
 
 @Test @MainActor func removeLegacyBlockedWhileBusy() async throws {
     let log = EventLog()
-    let model = makeModel(home: try fixtureHome(withLegacy: true), log: log, dryRun: false)
+    let home = try fixtureHome(withLegacy: true)
+    defer { removeHome(home) }
+    let model = makeModel(home: home, log: log, dryRun: false)
     await model.detectLegacy()
     model.isScanning = true
 
@@ -249,4 +266,70 @@ private func makeModel(home: URL, log: EventLog, dryRun: Bool) -> AppModel {
 
     #expect(!log.events.contains { $0.contains("bootout") || $0.hasPrefix("trash") })
     #expect(model.lastRemoval == nil)
+}
+
+@Test @MainActor func removeLegacyRedetectsFirst() async throws {
+    let log = EventLog()
+    let home = try fixtureHome(withLegacy: true)
+    defer { removeHome(home) }
+    let model = makeModel(home: home, log: log, dryRun: false)
+    await model.detectLegacy()
+    // Zwischen Anzeige und Klick verschwunden: darf nicht im Plan landen.
+    try FileManager.default.removeItem(at: home.appending(path: "cleanup.sh"))
+
+    await model.removeLegacy(includeExtras: true)
+
+    #expect(log.events.last == "trash dryRun=false com.frankjuchim.cleanup,de.bodendiek.klarschiff.check,log")
+}
+
+@Test @MainActor func failedBootoutKeepsAgentPlist() async throws {
+    let log = EventLog()
+    let home = try fixtureHome(withLegacy: true)
+    defer { removeHome(home) }
+    let model = makeModel(home: home, log: log, dryRun: false, failingBootout: "com.frankjuchim.cleanup")
+    await model.detectLegacy()
+
+    await model.removeLegacy(includeExtras: false)
+
+    #expect(log.events.filter { $0.hasPrefix("trash") } == ["trash dryRun=false de.bodendiek.klarschiff.check"])
+    #expect(model.lastRemoval?.failures.count == 1)
+    // Der Agent läuft weiter, seine plist bleibt – die Karte zeigt ihn weiter.
+    #expect(model.legacyItems.contains { $0.id == "com.frankjuchim.cleanup" })
+    #expect(ResultBanner.headline(model.lastRemoval!, legacy: true, dryRun: false) == "Alte Automatik nur teilweise entfernt.")
+}
+
+@Test @MainActor func removeLegacyNothingToDoWithoutExtras() async throws {
+    let log = EventLog()
+    let home = try fixtureHome(withLegacy: true)
+    defer { removeHome(home) }
+    for label in LegacyAutomation.labels {
+        try FileManager.default.removeItem(at: home.appending(path: "Library/LaunchAgents/\(label).plist"))
+    }
+    let model = makeModel(home: home, log: log, dryRun: false)
+    await model.detectLegacy()
+    #expect(!AppModel.legacyWouldRemove(model.legacyItems, includeExtras: false))
+    #expect(AppModel.legacyWouldRemove(model.legacyItems, includeExtras: true))
+
+    await model.removeLegacy(includeExtras: false)
+
+    #expect(!log.events.contains { $0.hasPrefix("trash") })
+    #expect(model.lastRemoval == nil)
+    #expect(model.isRemoving == false)
+}
+
+@Test func legacyToggleMentionsEmptyAppOnlyIfPresent() {
+    func item(_ id: String, _ kind: LegacyItem.Kind) -> LegacyItem {
+        LegacyItem(id: id, kind: kind, url: URL(filePath: "/x/\(id)"), title: id, explanation: "", isLoaded: false)
+    }
+    let without = [item("script", .script), item("log", .log)]
+    #expect(LegacyAutomationCard.extrasToggleText(without) == "Skript und Protokolle ebenfalls in den Papierkorb legen")
+    #expect(LegacyAutomationCard.extrasToggleText(without + [item("app", .emptyApp)])
+        == "Skript, Protokolle und die leere alte App ebenfalls in den Papierkorb legen")
+}
+
+@Test func resultBannerHeadlines() {
+    let ok = RemovalReport(results: [], freedBytes: 0, failures: [])
+    #expect(ResultBanner.headline(ok, legacy: true, dryRun: false) == "Alte Automatik entfernt.")
+    #expect(ResultBanner.headline(ok, legacy: true, dryRun: true) == "Alte Automatik entfernt. (Trockenlauf)")
+    #expect(ResultBanner.headline(ok, legacy: false, dryRun: false) == "\(ByteFormat.string(0)) frei geworden.")
 }

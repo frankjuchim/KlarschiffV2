@@ -7,13 +7,22 @@ public enum GrowthWatcher {
     static let cleanableMin: Int64 = 1_000_000_000
     static let lowSpaceAbsolute: Int64 = 20_000_000_000
 
+    /// Unbekannt: ID selbst oder ihr Scanner (Teil vor `/`) steht in `lowerBoundIDs`.
+    static func isUnknown(_ id: String, in s: CheckSnapshot) -> Bool {
+        if s.lowerBoundIDs.contains(id) { return true }
+        guard let scanner = id.split(separator: "/", maxSplits: 1).first, scanner.count < id.count else { return false }
+        return s.lowerBoundIDs.contains(String(scanner))
+    }
+
+    /// Verglichen werden nur IDs, die in beiden Snapshots eine Größe haben und in keinem als Untergrenze/unbekannt gelten.
     /// Reihenfolge: growth (absteigend nach Zuwachs), lowSpace, cleanable.
     public static func alerts(previous: CheckSnapshot?, current: CheckSnapshot) -> [CheckAlert] {
         var result: [CheckAlert] = []
 
         if let previous {
             let grown: [(id: String, from: Int64, to: Int64)] = current.sizes.compactMap { id, to in
-                guard let from = previous.sizes[id] else { return nil }
+                guard let from = previous.sizes[id],
+                      !isUnknown(id, in: previous), !isUnknown(id, in: current) else { return nil }
                 let delta = to - from
                 guard delta >= growthAbsolute || (delta >= growthDoubledMin && to > 2 * from) else { return nil }
                 return (id, from, to)

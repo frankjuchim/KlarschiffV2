@@ -32,6 +32,7 @@ public enum LegacyAutomation {
 
     static let cleanupSentence = "Das Skript `cleanup.sh` leert jeden Monatsersten automatisch deine Caches – das macht Klarschiff 2 bewusst nie ohne dich."
     static let checkSentence = "Der alte Klarschiff-Check zeigt auf eine App, die es nicht mehr gibt."
+    static let oldCheckStillRunsSentence = "Der Check von Klarschiff 1 startet weiterhin jeden Sonntag. Klarschiff 2 übernimmt diese Aufgabe – der alte Check wird nicht mehr gebraucht."
 
     private static let notFoundMarkers = ["Could not find service", "No such process"]
 
@@ -39,15 +40,25 @@ public enum LegacyAutomation {
         let fm = FileManager.default
         var items: [LegacyItem] = []
 
-        let agents: [(label: String, intro: String, sentence: String)] = [
-            (labels[0], "Startet jeden Monatsersten%@ das Skript `cleanup.sh`.", cleanupSentence),
-            (labels[1], "Startet sonntags%@ einen Check.", checkSentence),
+        let scriptURL = ctx.homePath("cleanup.sh")
+        let scriptExists = fm.fileExists(atPath: scriptURL.path)
+        let app = ctx.absolute("/Applications/Klarschiff.app")
+        var isDir: ObjCBool = false
+        let emptyApp = fm.fileExists(atPath: app.path, isDirectory: &isDir) && isDir.boolValue && isEmptyBundle(app)
+        let oldAppRuns = fm.fileExists(atPath: app.appending(path: "Contents/MacOS/Klarschiff").path)
+
+        // Jeder Erklärsatz erscheint nur einmal: Aufräum-Satz am Skript (sonst am Agent),
+        // Check-Satz an der leeren App (sonst am Agent).
+        let checkAgentSentence: String? = oldAppRuns ? oldCheckStillRunsSentence : (emptyApp ? nil : checkSentence)
+        let agents: [(label: String, intro: String, sentence: String?)] = [
+            (labels[0], "Startet jeden Monatsersten%@ das Skript `cleanup.sh`.", scriptExists ? nil : cleanupSentence),
+            (labels[1], "Startet sonntags%@ einen Check.", checkAgentSentence),
         ]
         for agent in agents {
             let url = ctx.homePath("Library/LaunchAgents/\(agent.label).plist")
             guard fm.fileExists(atPath: url.path) else { continue }
             let timeText = scheduledTime(plist: url).map { " um \($0) Uhr" } ?? ""
-            let explanation = String(format: agent.intro, timeText) + " " + agent.sentence
+            let explanation = [String(format: agent.intro, timeText), agent.sentence].compactMap { $0 }.joined(separator: " ")
             let loaded = await isLoaded(agent.label, runner: ctx.runner, uid: uid)
             items.append(LegacyItem(
                 id: agent.label, kind: .agent(label: agent.label), url: url,
@@ -66,9 +77,7 @@ public enum LegacyAutomation {
             items.append(LegacyItem(id: f.id, kind: f.kind, url: url, title: f.title, explanation: f.explanation, isLoaded: false))
         }
 
-        let app = ctx.absolute("/Applications/Klarschiff.app")
-        var isDir: ObjCBool = false
-        if fm.fileExists(atPath: app.path, isDirectory: &isDir), isDir.boolValue, isEmptyBundle(app) {
+        if emptyApp {
             items.append(LegacyItem(
                 id: "app", kind: .emptyApp, url: app, title: "Leere alte App Klarschiff.app",
                 explanation: "Ein leerer Ordner ohne Programm – " + checkSentence.prefix(1).lowercased() + checkSentence.dropFirst(),

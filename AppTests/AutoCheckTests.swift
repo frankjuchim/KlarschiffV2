@@ -122,6 +122,15 @@ private func makeModel(
     history: CheckHistory = CheckHistory(fileURL: tempDir().appending(path: "history.json")),
     defaults: UserDefaults = tempDefaults()
 ) -> AppModel {
+    makeModelWith(notifier: notifier, agents: agents, history: history, defaults: defaults)
+}
+
+@MainActor
+private func makeModelWith(
+    notifier: any Notifier, agents: FakeAgentService = FakeAgentService(),
+    history: CheckHistory = CheckHistory(fileURL: tempDir().appending(path: "history.json")),
+    defaults: UserDefaults = tempDefaults()
+) -> AppModel {
     let dir = tempDir()
     let disk: @Sendable () throws -> DiskSpace = { DiskSpace(free: 100, total: 1_000) }
     let runner = RemovalRunner(
@@ -152,7 +161,7 @@ private func makeModel(
         dryRun: true,
         terminate: { _ in false },
         history: history,
-        measureSystemRoots: { _ in ["library": (title: "Bibliothek", size: 5_000)] },
+        measureSystemRoots: { _ in ["library": (title: "Bibliothek", size: 5_000, isLowerBound: false)] },
         notifier: notifier,
         agentService: agents)
     return AppModel(dependencies: deps, defaults: defaults)
@@ -215,7 +224,104 @@ private func makeModel(
     await model.setCheckSchedule(.monthly)
 
     #expect(model.lastError == AppErrorText.checkSchedule)
+    #expect(model.checkScheduleError == AppErrorText.checkSchedule)
     #expect(model.agentStatus == .notRegistered)
+
+    // Ausschalten gelingt → Fehler in den Einstellungen verschwindet.
+    await model.setCheckSchedule(.off)
+    #expect(model.checkScheduleError == nil)
+}
+
+/// Hält `requestAuthorization` an, bis `release()` – und merkt sich, was beim Fragen schon angemeldet war.
+private final class GatedNotifier: Notifier, Sendable {
+    private let agents: FakeAgentService
+    private let state = Mutex<(requests: Int, registeredAtRequest: [String], waiting: CheckedContinuation<Void, Never>?, released: Bool)>(
+        (0, [], nil, false))
+    init(agents: FakeAgentService, released: Bool = false) {
+        self.agents = agents
+        state.withLock { $0.released = released }
+    }
+    var requestCalls: Int { state.withLock { $0.requests } }
+    var registeredAtRequest: [String] { state.withLock { $0.registeredAtRequest } }
+    func release() {
+        let c: CheckedContinuation<Void, Never>? = state.withLock { s in
+            s.released = true
+            defer { s.waiting = nil }
+            return s.waiting
+        }
+        c?.resume()
+    }
+    func requestAuthorization() async -> Bool {
+        let registered = agents.registered
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            let resumeNow = state.withLock { s in
+                s.requests += 1
+                s.registeredAtRequest = registered
+                if s.released { return true }
+                s.waiting = c
+                return false
+            }
+            if resumeNow { c.resume() }
+        }
+        return true
+    }
+    func isAuthorized() async -> Bool { true }
+    func authorizationStatus() async -> NotificationAuthorization { .authorized }
+    func send(_ n: CheckNotification) async {}
+}
+
+@Test @MainActor func registersBeforeAskingForNotifications() async {
+    let agents = FakeAgentService()
+    let notifier = GatedNotifier(agents: agents, released: true)
+    let model = makeModelWith(notifier: notifier, agents: agents)
+
+    await model.setCheckSchedule(.weekly)
+
+    #expect(notifier.requestCalls == 1)
+    #expect(notifier.registeredAtRequest == [CheckScheduler.weeklyPlist])
+    #expect(model.agentStatus == .enabled)
+}
+
+@Test @MainActor func scheduleChangesAreSerialised() async {
+    let agents = FakeAgentService()
+    let notifier = GatedNotifier(agents: agents)
+    let model = makeModelWith(notifier: notifier, agents: agents)
+
+    let first = Task { await model.setCheckSchedule(.weekly) }
+    while notifier.requestCalls == 0 { try? await Task.sleep(for: .milliseconds(5)) }
+    // Während die Frage offen ist: neuer Wunsch wird nur gemerkt.
+    await model.setCheckSchedule(.monthly)
+    #expect(agents.registered == [CheckScheduler.weeklyPlist])
+    #expect(model.checkSchedule == .monthly)
+
+    notifier.release()
+    await first.value
+
+    #expect(agents.registered == [CheckScheduler.weeklyPlist, CheckScheduler.monthlyPlist])
+    #expect(agents.unregistered == [CheckScheduler.weeklyPlist])
+    #expect(model.agentStatus == .enabled)
+    #expect(notifier.requestCalls == 1)
+}
+
+@Test @MainActor func launchReappliesUnregisteredSchedule() async {
+    let defaults = tempDefaults()
+    defaults.set("weekly", forKey: AppModel.checkScheduleDefaultsKey)
+    let agents = FakeAgentService()
+    let notifier = FakeNotifier(allowed: true)
+    let model = makeModel(notifier: notifier, agents: agents, defaults: defaults)
+    #expect(model.agentStatus == .notRegistered)
+
+    await model.reapplyScheduleIfNeeded()
+    #expect(agents.registered == [CheckScheduler.weeklyPlist])
+    #expect(model.agentStatus == .enabled)
+    #expect(notifier.requestCalls == 0)
+
+    // Schon angemeldet bzw. aus: nichts tun.
+    await model.reapplyScheduleIfNeeded()
+    #expect(agents.registered == [CheckScheduler.weeklyPlist])
+    let off = FakeAgentService()
+    await makeModel(agents: off).reapplyScheduleIfNeeded()
+    #expect(off.registered.isEmpty)
 }
 
 // MARK: - Jetzt prüfen

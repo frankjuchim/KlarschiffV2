@@ -62,8 +62,19 @@ struct ResultBanner: View {
     }
 
     private var freedText: String {
-        let base = "\(ByteFormat.string(report.freedBytes)) frei geworden."
-        return model.lastRemovalWasDryRun ? base + " (Trockenlauf)" : base
+        Self.headline(report, legacy: model.lastRemovalWasLegacy, dryRun: model.lastRemovalWasDryRun)
+    }
+
+    /// Überschrift: freigewordener Platz – nach dem Entfernen der alten Automatik (Dateien ohne Größe) ein Erfolgssatz.
+    /// Das Trockenlauf-Etikett gehört zum jeweiligen Lauf.
+    nonisolated static func headline(_ report: RemovalReport, legacy: Bool, dryRun: Bool) -> String {
+        let base: String
+        if legacy {
+            base = report.failures.isEmpty ? "Alte Automatik entfernt." : "Alte Automatik nur teilweise entfernt."
+        } else {
+            base = "\(ByteFormat.string(report.freedBytes)) frei geworden."
+        }
+        return dryRun ? base + " (Trockenlauf)" : base
     }
 
     /// „n Einträge konnten nicht entfernt werden.“ (Einzahl bei genau einem Eintrag).

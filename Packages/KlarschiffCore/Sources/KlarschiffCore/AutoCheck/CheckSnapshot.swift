@@ -16,9 +16,13 @@ public struct CheckSnapshot: Codable, Sendable, Equatable {
     public var sizes: [String: Int64]
     public var titles: [String: String]
     public var alerts: [CheckAlert]
+    /// IDs, deren Größe nur eine Untergrenze ist oder deren Scanner fehlschlug (unbekannt) – nie für Wachstum verglichen.
+    /// Fehlt in älteren Verläufen; dann leer.
+    public var lowerBoundIDs: Set<String> = []
 
     public init(date: Date, cleanableTotal: Int64, freeBytes: Int64, totalBytes: Int64,
-                sizes: [String: Int64], titles: [String: String], alerts: [CheckAlert]) {
+                sizes: [String: Int64], titles: [String: String], alerts: [CheckAlert],
+                lowerBoundIDs: Set<String> = []) {
         self.date = date
         self.cleanableTotal = cleanableTotal
         self.freeBytes = freeBytes
@@ -26,5 +30,18 @@ public struct CheckSnapshot: Codable, Sendable, Equatable {
         self.sizes = sizes
         self.titles = titles
         self.alerts = alerts
+        self.lowerBoundIDs = lowerBoundIDs
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        date = try c.decode(Date.self, forKey: .date)
+        cleanableTotal = try c.decode(Int64.self, forKey: .cleanableTotal)
+        freeBytes = try c.decode(Int64.self, forKey: .freeBytes)
+        totalBytes = try c.decode(Int64.self, forKey: .totalBytes)
+        sizes = try c.decode([String: Int64].self, forKey: .sizes)
+        titles = try c.decode([String: String].self, forKey: .titles)
+        alerts = try c.decode([CheckAlert].self, forKey: .alerts)
+        lowerBoundIDs = try c.decodeIfPresent(Set<String>.self, forKey: .lowerBoundIDs) ?? []
     }
 }
