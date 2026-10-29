@@ -45,7 +45,7 @@ import Foundation
         #expect(ids.contains("formula:mitmproxy") && ids.contains("formula:libyaml"))
         #expect(f.items.count == 8)
         let ruby = try #require(f.items.first { $0.name == "4.0.7" })
-        #expect(ruby.size == 5000 || (ruby.size ?? 0) >= 5000)
+        #expect(try #require(ruby.size) >= 5000)
         let formula = try #require(f.items.first { $0.id == "formula:mitmproxy" })
         #expect(formula.name == "mitmproxy" && formula.detail == "nicht mehr benötigt")
         #expect(formula.url == URL(fileURLWithPath: "\(tree.root.path)/opt/homebrew/Cellar/mitmproxy"))
@@ -74,6 +74,15 @@ import Foundation
         let fake = try cleanupFake(tree, autoremove: "")
         fake.stub(Self.brew, ["cleanup", "--prune=all", "-n"], result: ok(""))
         #expect(try await HomebrewCleanupScanner().scan(.test(runner: fake, tools: Self.tools)).isEmpty)
+    }
+
+    @Test func cacheClaimedEvenWhenNothingToClean() async throws {
+        let tree = try cleanupTree()
+        let fake = try cleanupFake(tree, autoremove: "")
+        fake.stub(Self.brew, ["cleanup", "--prune=all", "-n"], result: ok(""))
+        let ctx = ScanContext.test(runner: fake, tools: Self.tools)
+        #expect(try await HomebrewCleanupScanner().scan(ctx).isEmpty)
+        #expect(await ctx.claims.isClaimed(URL(fileURLWithPath: "\(tree.root.path)/Library/Caches/Homebrew")))
     }
 
     @Test func nonZeroExitThrows() async throws {
@@ -121,6 +130,7 @@ import Foundation
     @Test func detectsUntrustedTap() {
         #expect(HomebrewErrors.untrustedTap(in: "Error: Refusing to load cask from untrusted tap homebrew/cask-versions") == "homebrew/cask-versions")
         #expect(HomebrewErrors.untrustedTap(in: "Error: Tap foo/bar is not trusted.") == "foo/bar")
+        #expect(HomebrewErrors.untrustedTap(in: "Error: Refusing to load from untrusted tap foo/bar.") == "foo/bar")
         #expect(HomebrewErrors.untrustedTap(in: "Error: No such file") == nil)
     }
 
