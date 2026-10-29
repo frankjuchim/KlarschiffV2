@@ -67,7 +67,7 @@ private struct HangingScanner: KlarschiffCore.Scanner {
         let r = await ScanEngine(scanners: [HangingScanner(id: "haengt")], perScannerTimeout: .milliseconds(200))
             .run(.test(), progress: { _, _ in })
         #expect(r.failures.first?.scannerID == "haengt")
-        #expect(r.failures.first?.message == "Zeitüberschreitung nach 0 s")
+        #expect(r.failures.first?.message == "Zeitüberschreitung nach 1 s")
         #expect(ContinuousClock.now - start < .seconds(5))
     }
 
@@ -121,5 +121,23 @@ private struct HangingScanner: KlarschiffCore.Scanner {
         let b = AppRef(bundleID: nil, processName: "proc", displayName: "B")
         let c = AppRef(bundleID: "no", processName: "no", displayName: "C")
         #expect(f.running([a, b, c]) == [a, b])
+    }
+
+    @Test func cancellingRunReturnsPromptlyWithAbgebrochen() async {
+        let engine = ScanEngine(scanners: [StubScanner.one(id: "ok"), HangingScanner(id: "haengt")],
+                                perScannerTimeout: .seconds(60))
+        let start = ContinuousClock.now
+        let task = Task { await engine.run(.test(), progress: { _, _ in }) }
+        try? await Task.sleep(for: .milliseconds(200))
+        task.cancel()
+        let r = await task.value
+        #expect(ContinuousClock.now - start < .seconds(5))
+        #expect(r.findings.map(\.id.scannerID) == ["ok"])
+        #expect(r.failures.first(where: { $0.scannerID == "haengt" })?.message == "Abgebrochen")
+    }
+
+    @Test func workspaceRunningAppsSeesLaunchd() {
+        let ref = AppRef(bundleID: nil, processName: "launchd", displayName: "launchd")
+        #expect(!WorkspaceRunningApps().running([ref]).isEmpty)
     }
 }

@@ -67,61 +67,78 @@ public struct ScanEngine: Sendable {
         return ScanReport(findings: findings, failures: failures)
     }
 
-    /// Rennt Scanner gegen Timeout; kehrt nach Ablauf auch zurück, wenn der Scanner Cancellation ignoriert.
+    /// Rennt Scanner gegen Timeout; kehrt nach Ablauf oder Abbruch auch zurück, wenn der Scanner Cancellation ignoriert.
     private static func runOne(_ scanner: any Scanner, _ ctx: ScanContext, _ timeout: Duration) async -> Result<[Finding], ScanFailure> {
         let id = scanner.id
-        return await withCheckedContinuation { cont in
-            let gate = Gate(cont)
-            let scanTask = Task {
-                do {
-                    gate.finish(.success(try await scanner.scan(ctx)))
-                } catch {
-                    gate.finish(.failure(ScanFailure(scannerID: id, message: error.localizedDescription)))
+        let gate = Gate()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { (cont: CheckedContinuation<Result<[Finding], ScanFailure>, Never>) in
+                let scanTask = Task {
+                    do {
+                        gate.finish(.success(try await scanner.scan(ctx)))
+                    } catch {
+                        gate.finish(.failure(ScanFailure(scannerID: id, message: error.localizedDescription)))
+                    }
                 }
+                let timer = Task {
+                    do { try await Task.sleep(for: timeout) } catch { return }
+                    let c = timeout.components
+                    let secs = c.seconds + (c.attoseconds > 0 ? 1 : 0)
+                    gate.finish(.failure(ScanFailure(scannerID: id, message: "Zeitüberschreitung nach \(max(1, secs)) s")))
+                }
+                gate.attach(cont: cont, scanTask: scanTask, timer: timer)
             }
-            let timer = Task {
-                do { try await Task.sleep(for: timeout) } catch { return }
-                let secs = timeout.components.seconds
-                gate.finish(.failure(ScanFailure(scannerID: id, message: "Zeitüberschreitung nach \(secs) s")))
-            }
-            gate.attach(scanTask: scanTask, timer: timer)
+        } onCancel: {
+            gate.finish(.failure(ScanFailure(scannerID: id, message: "Abgebrochen")))
         }
     }
 }
 
 /// Löst die Continuation genau einmal auf; räumt die jeweils andere Task ab.
 private final class Gate: Sendable {
+    typealias Cont = CheckedContinuation<Result<[Finding], ScanFailure>, Never>
     private struct State {
-        var cont: CheckedContinuation<Result<[Finding], ScanFailure>, Never>?
+        var cont: Cont?
         var scanTask: Task<Void, Never>?
         var timer: Task<Void, Never>?
+        var result: Result<[Finding], ScanFailure>?
         var done = false
     }
-    private let state: Mutex<State>
+    private let state = Mutex(State())
 
-    init(_ cont: CheckedContinuation<Result<[Finding], ScanFailure>, Never>) {
-        state = Mutex(State(cont: cont))
-    }
-
-    func attach(scanTask: Task<Void, Never>, timer: Task<Void, Never>) {
-        let alreadyDone = state.withLock { s -> Bool in
+    /// Registriert Continuation und Tasks; war das Ergebnis schon da (z. B. Abbruch vorab), wird sofort aufgelöst.
+    func attach(cont: Cont, scanTask: Task<Void, Never>, timer: Task<Void, Never>) {
+        let early = state.withLock { s -> Result<[Finding], ScanFailure>? in
+            if s.done {
+                let r = s.result
+                s.result = nil
+                return r
+            }
+            s.cont = cont
             s.scanTask = scanTask
             s.timer = timer
-            return s.done
+            return nil
         }
-        if alreadyDone { timer.cancel() }
+        if let early {
+            timer.cancel()
+            scanTask.cancel()
+            cont.resume(returning: early)
+        }
     }
 
     func finish(_ result: Result<[Finding], ScanFailure>) {
-        let (cont, scanTask, timer) = state.withLock { s -> (CheckedContinuation<Result<[Finding], ScanFailure>, Never>?, Task<Void, Never>?, Task<Void, Never>?) in
+        let (cont, scanTask, timer) = state.withLock { s -> (Cont?, Task<Void, Never>?, Task<Void, Never>?) in
             if s.done { return (nil, nil, nil) }
             s.done = true
-            defer { s.cont = nil }
-            return (s.cont, s.scanTask, s.timer)
+            let out = (s.cont, s.scanTask, s.timer)
+            s.cont = nil
+            s.scanTask = nil
+            s.timer = nil
+            if out.0 == nil { s.result = result }
+            return out
         }
-        guard let cont else { return }
         timer?.cancel()
         scanTask?.cancel()
-        cont.resume(returning: result)
+        cont?.resume(returning: result)
     }
 }
