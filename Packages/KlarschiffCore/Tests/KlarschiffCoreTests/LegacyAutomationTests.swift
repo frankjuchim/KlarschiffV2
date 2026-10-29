@@ -49,6 +49,47 @@ import Testing
         #expect(items.isEmpty)
     }
 
+    func legacyApp(_ build: (FixtureTree) throws -> Void) async throws -> Int {
+        let t = try FixtureTree()
+        try build(t)
+        let items = await LegacyAutomation.detect(ScanContext.test(root: t.root), uid: 501)
+        return items.filter { if case .emptyApp = $0.kind { true } else { false } }.count
+    }
+
+    @Test func appEmptinessRuling() async throws {
+        #expect(try await legacyApp { try $0.dir("Applications/Klarschiff.app") } == 1)
+        #expect(try await legacyApp { try $0.dir("Applications/Klarschiff.app/Contents/MacOS") } == 1)
+        #expect(try await legacyApp { try $0.file("Applications/Klarschiff.app/.DS_Store", bytes: 3) } == 1)
+        #expect(try await legacyApp { try $0.file("Applications/Klarschiff.app/Contents/MacOS/OtherName", bytes: 3) } == 0)
+        #expect(try await legacyApp { try $0.file("Applications/Klarschiff.app/Contents/Info.plist", bytes: 3) } == 0)
+        #expect(try await legacyApp {
+            let target = try $0.file("elsewhere", bytes: 1)
+            try $0.dir("Applications/Klarschiff.app")
+            try $0.symlink("Applications/Klarschiff.app/link", to: target)
+        } == 0)
+    }
+
+    @Test func foreignURLDroppedFromFinding() async throws {
+        let t = try fullFixture()
+        let ctx = ScanContext.test(root: t.root)
+        var items = await LegacyAutomation.detect(ctx, uid: 501)
+        items.append(LegacyItem(id: "x", kind: .log, url: ctx.homePath("Documents/wichtig.txt"), title: "x", explanation: "", isLoaded: false))
+        let f = LegacyAutomation.removalFinding(items, ctx: ctx, includeExtras: true)
+        #expect(f.items.count == 6)
+        #expect(!f.items.contains { $0.url?.lastPathComponent == "wichtig.txt" })
+    }
+
+    @Test func scheduleTimeReadFromPlist() async throws {
+        let t = try FixtureTree()
+        let url = try t.file("home/Library/LaunchAgents/com.frankjuchim.cleanup.plist", bytes: 0)
+        let plist: [String: Any] = ["StartCalendarInterval": ["Day": 1, "Hour": 9, "Minute": 0]]
+        try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0).write(to: url)
+        try t.file("home/Library/LaunchAgents/de.bodendiek.klarschiff.check.plist", bytes: 5)
+        let items = await LegacyAutomation.detect(ScanContext.test(root: t.root), uid: 501)
+        #expect(items[0].explanation.contains("um 9:00 Uhr"))
+        #expect(!items[1].explanation.contains(" Uhr"))
+    }
+
     @Test func loadedStateFromLaunchctlPrint() async throws {
         let t = try fullFixture()
         let runner = FakeCommandRunner()
@@ -96,6 +137,7 @@ import Testing
         runner.stub(launchctl, ["bootout", "gui/501/\(cleanupLabel)"], result: CommandResult(exitCode: 5, stdout: "", stderr: "Input/output error"))
         let r2 = await LegacyAutomation.bootout(items, runner: runner, uid: 501, dryRun: false)
         if case .failed(let m) = r2[0].outcome { #expect(m.contains("Input/output error")) } else { Issue.record("erwartet failed") }
+        #expect(r2[1].outcome == .removed(freed: nil))
     }
 
     @Test func bootoutDryRunNoCalls() async throws {
@@ -111,12 +153,12 @@ import Testing
     @Test func removalFindingExtrasToggle() async throws {
         let t = try fullFixture()
         let items = await LegacyAutomation.detect(ScanContext.test(root: t.root), uid: 501)
-        let lean = LegacyAutomation.removalFinding(items, includeExtras: false)
+        let lean = LegacyAutomation.removalFinding(items, ctx: ScanContext.test(root: t.root), includeExtras: false)
         #expect(lean.category == KlarschiffCore.Category.system)
         #expect(lean.method == .trash)
         #expect(lean.items.count == 2)
         #expect(lean.items.allSatisfy { $0.url?.pathExtension == "plist" })
-        let full = LegacyAutomation.removalFinding(items, includeExtras: true)
+        let full = LegacyAutomation.removalFinding(items, ctx: ScanContext.test(root: t.root), includeExtras: true)
         #expect(full.items.count == 6)
         #expect(Set(full.items.map(\.id)).count == 6)
     }

@@ -30,28 +30,33 @@ public enum LegacyAutomation {
     static let launchctl = "/bin/launchctl"
     static let scannerID = "legacy-automation"
 
+    static let cleanupSentence = "Das Skript `cleanup.sh` leert jeden Monatsersten automatisch deine Caches – das macht Klarschiff 2 bewusst nie ohne dich."
+    static let checkSentence = "Der alte Klarschiff-Check zeigt auf eine App, die es nicht mehr gibt."
+
     private static let notFoundMarkers = ["Could not find service", "No such process"]
 
     public static func detect(_ ctx: ScanContext, uid: uid_t = getuid()) async -> [LegacyItem] {
         let fm = FileManager.default
         var items: [LegacyItem] = []
 
-        let agents: [(label: String, explanation: String)] = [
-            (labels[0], "Startet jeden Monatsersten um 9:00 Uhr das Skript `cleanup.sh`. Das Skript `cleanup.sh` leert jeden Monatsersten automatisch deine Caches – das macht Klarschiff 2 bewusst nie ohne dich."),
-            (labels[1], "Startet sonntags um 10:00 Uhr einen Check. Der alte Klarschiff-Check zeigt auf eine App, die es nicht mehr gibt."),
+        let agents: [(label: String, intro: String, sentence: String)] = [
+            (labels[0], "Startet jeden Monatsersten%@ das Skript `cleanup.sh`.", cleanupSentence),
+            (labels[1], "Startet sonntags%@ einen Check.", checkSentence),
         ]
         for agent in agents {
             let url = ctx.homePath("Library/LaunchAgents/\(agent.label).plist")
             guard fm.fileExists(atPath: url.path) else { continue }
+            let timeText = scheduledTime(plist: url).map { " um \($0) Uhr" } ?? ""
+            let explanation = String(format: agent.intro, timeText) + " " + agent.sentence
             let loaded = await isLoaded(agent.label, runner: ctx.runner, uid: uid)
             items.append(LegacyItem(
                 id: agent.label, kind: .agent(label: agent.label), url: url,
-                title: "Hintergrund-Agent \(agent.label)", explanation: agent.explanation, isLoaded: loaded))
+                title: "Hintergrund-Agent \(agent.label)", explanation: explanation, isLoaded: loaded))
         }
 
         let files: [(id: String, rel: String, kind: LegacyItem.Kind, title: String, explanation: String)] = [
             ("script", "cleanup.sh", .script, "Skript cleanup.sh",
-             "Das Skript `cleanup.sh` leert jeden Monatsersten automatisch deine Caches – das macht Klarschiff 2 bewusst nie ohne dich."),
+             cleanupSentence),
             ("log", "cleanup.log", .log, "Protokoll cleanup.log", "Altes Protokoll des Aufräum-Skripts."),
             ("errorlog", "cleanup_error.log", .log, "Protokoll cleanup_error.log", "Altes Fehlerprotokoll des Aufräum-Skripts."),
         ]
@@ -63,14 +68,42 @@ public enum LegacyAutomation {
 
         let app = ctx.absolute("/Applications/Klarschiff.app")
         var isDir: ObjCBool = false
-        if fm.fileExists(atPath: app.path, isDirectory: &isDir), isDir.boolValue,
-           !fm.fileExists(atPath: app.appending(path: "Contents/MacOS/Klarschiff").path) {
+        if fm.fileExists(atPath: app.path, isDirectory: &isDir), isDir.boolValue, isEmptyBundle(app) {
             items.append(LegacyItem(
                 id: "app", kind: .emptyApp, url: app, title: "Leere alte App Klarschiff.app",
-                explanation: "Ein leerer Ordner ohne Programm – der alte Klarschiff-Check zeigt auf eine App, die es nicht mehr gibt.",
+                explanation: "Ein leerer Ordner ohne Programm – " + checkSentence.prefix(1).lowercased() + checkSentence.dropFirst(),
                 isLoaded: false))
         }
         return items
+    }
+
+    /// Leer = rekursiv keine Dateien außer `.DS_Store`; Symlinks (auch die App selbst) und Lesefehler zählen als „nicht leer“.
+    static func isEmptyBundle(_ url: URL) -> Bool {
+        let fm = FileManager.default
+        func type(_ u: URL) -> FileAttributeType? { (try? fm.attributesOfItem(atPath: u.path))?[.type] as? FileAttributeType }
+        guard type(url) == .typeDirectory else { return false }
+        guard let names = try? fm.contentsOfDirectory(atPath: url.path) else { return false }
+        for name in names {
+            let child = url.appending(path: name)
+            switch type(child) {
+            case .typeDirectory: if !isEmptyBundle(child) { return false }
+            case .typeRegular where name == ".DS_Store": continue
+            default: return false
+            }
+        }
+        return true
+    }
+
+    /// Liest Stunde/Minute aus `StartCalendarInterval` (Dictionary oder erstes Array-Element); sonst nil.
+    static func scheduledTime(plist url: URL) -> String? {
+        guard let data = try? Data(contentsOf: url),
+              let obj = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
+        else { return nil }
+        var interval = obj["StartCalendarInterval"]
+        if let arr = interval as? [[String: Any]] { interval = arr.first }
+        guard let dict = interval as? [String: Any], let hour = dict["Hour"] as? Int else { return nil }
+        let minute = dict["Minute"] as? Int ?? 0
+        return String(format: "%d:%02d", hour, minute)
     }
 
     static func isLoaded(_ label: String, runner: CommandRunner, uid: uid_t) async -> Bool {
@@ -79,8 +112,14 @@ public enum LegacyAutomation {
         return result?.succeeded == true
     }
 
-    public static func removalFinding(_ items: [LegacyItem], includeExtras: Bool) -> Finding {
+    /// Nur Items, deren URL einer der sechs festen Pfade ist, werden aufgenommen.
+    public static func removalFinding(_ items: [LegacyItem], ctx: ScanContext, includeExtras: Bool) -> Finding {
+        let allowed = Set(
+            labels.map { ctx.homePath("Library/LaunchAgents/\($0).plist").path }
+                + [ctx.homePath("cleanup.sh").path, ctx.homePath("cleanup.log").path,
+                   ctx.homePath("cleanup_error.log").path, ctx.absolute("/Applications/Klarschiff.app").path])
         let chosen = items.filter { item in
+            guard allowed.contains(item.url.path) else { return false }
             if case .agent = item.kind { return true }
             return includeExtras
         }
