@@ -1,0 +1,3 @@
+stable-aarch64-apple-darwin (default)
+nightly-aarch64-apple-darwin
+1.70.0-aarch64-apple-darwin
