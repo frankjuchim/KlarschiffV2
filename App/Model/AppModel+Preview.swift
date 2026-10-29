@@ -53,7 +53,45 @@ extension AppDependencies {
             history: CheckHistory(fileURL: keepFile.deletingLastPathComponent().appending(path: "history.json")),
             measureSystemRoots: { _ in [:] },
             notifier: PreviewNotifier(),
-            agentService: PreviewAgentService())
+            agentService: PreviewAgentService(),
+            loadServices: { _ in ServicesLoad(items: PreviewServices.items, loginItemsFailed: false) })
+    }
+}
+
+/// Fake-Hintergrunddienste: verwaister Benutzer-Agent, verwaister System-Daemon, laufendes Anmeldeobjekt,
+/// der eigene Check von Klarschiff 2 und ein normaler Agent.
+enum PreviewServices {
+    static let home = URL(filePath: "/Users/vorschau")
+
+    static var items: [LaunchItem] {
+        [
+            LaunchItem(
+                id: "user/com.example.synchelper", label: "com.example.synchelper", scope: .user,
+                plistURL: home.appending(path: "Library/LaunchAgents/com.example.synchelper.plist"),
+                programPath: "/Applications/SyncApp.app/Contents/MacOS/SyncHelper", startKind: .atLogin,
+                isRunning: true, isOrphaned: true, displayName: "Sync Helper",
+                explanation: "Das Programm fehlt: /Applications/SyncApp.app/Contents/MacOS/SyncHelper. Die App wurde vermutlich gelöscht."),
+            LaunchItem(
+                id: "system/com.example.vpn.daemon", label: "com.example.vpn.daemon", scope: .system,
+                plistURL: URL(filePath: "/Library/LaunchDaemons/com.example.vpn.daemon.plist"),
+                programPath: "/Library/PrivilegedHelperTools/com.example.vpn.daemon", startKind: .atLogin,
+                isOrphaned: true, displayName: "Vpn Daemon",
+                explanation: "Das Programm fehlt: /Library/PrivilegedHelperTools/com.example.vpn.daemon. Es wurde vermutlich deinstalliert."),
+            LaunchItem(
+                id: "user/com.google.keystone.agent", label: "com.google.keystone.agent", scope: .user,
+                plistURL: home.appending(path: "Library/LaunchAgents/com.google.keystone.agent.plist"),
+                appURL: URL(filePath: "/Applications/Google Chrome.app"), startKind: .scheduled,
+                displayName: "Google Chrome", explanation: "Gehört zu Google Chrome."),
+            LaunchItem(
+                id: "user/de.frankjuchim.klarschiff2.check.weekly", label: "de.frankjuchim.klarschiff2.check.weekly",
+                scope: .user, startKind: .scheduled, isOwnAgent: true,
+                displayName: "Klarschiff 2 – automatischer Check",
+                explanation: "Das ist der automatische Check von Klarschiff 2. Er bleibt immer erhalten."),
+            LaunchItem(
+                id: "loginItem/com.google.drivefs", label: "com.google.drivefs", scope: .loginItem,
+                associatedBundleIDs: ["com.google.drivefs"], startKind: .atLogin, isRunning: true,
+                displayName: "Google Drive", explanation: "Startet bei jeder Anmeldung."),
+        ]
     }
 }
 

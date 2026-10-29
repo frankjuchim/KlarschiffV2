@@ -90,6 +90,8 @@ final class AppModel {
     var lastRemovalWasDryRun = false
     /// War der Lauf hinter `lastRemoval` die Entfernung der alten Automatik? Dann zeigt das Banner einen Erfolgssatz statt Bytes.
     var lastRemovalWasLegacy = false
+    /// War der Lauf hinter `lastRemoval` die Entfernung von Hintergrunddiensten? Dann zeigt das Banner einen Erfolgssatz statt Bytes.
+    var lastRemovalWasServices = false
     /// Läuft gerade eine Entfernung (Aufräumen oder Papierkorb leeren)? Sperrt Scan und weitere Entfernungen.
     var isRemoving = false
     var removalProgress: String?
@@ -306,6 +308,7 @@ final class AppModel {
             failures: bootoutFailures + trashed.failures)
         lastRemovalWasDryRun = runDry
         lastRemovalWasLegacy = true
+        lastRemovalWasServices = false
         isRemoving = false
         removalProgress = nil
         trashBytes = await deps.trash(ctx)
@@ -536,6 +539,7 @@ final class AppModel {
             failures: bootoutFailures + executed.failures)
         lastRemovalWasDryRun = runDry
         lastRemovalWasLegacy = false
+        lastRemovalWasServices = true
         selectedServices = []
         // Noch unter der Sperre neu einlesen, damit die Liste nie veraltet stehen bleibt.
         removalProgress = "Hintergrunddienste werden neu geprüft …"
@@ -685,6 +689,7 @@ final class AppModel {
         lastRemoval = result
         lastRemovalWasDryRun = plan.options.dryRun
         lastRemovalWasLegacy = false
+        lastRemovalWasServices = false
         isRemoving = false
         removalProgress = nil
         refreshSystemState()
@@ -708,6 +713,7 @@ final class AppModel {
             lastRemoval = try await deps.emptyTrash(runDry)
             lastRemovalWasDryRun = runDry
             lastRemovalWasLegacy = false
+            lastRemovalWasServices = false
         } catch let error as EmptyTrashError {
             lastError = error.message
         } catch {

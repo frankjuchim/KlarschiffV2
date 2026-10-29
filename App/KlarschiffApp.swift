@@ -216,7 +216,10 @@ struct RootView: View {
         case .systemData:
             SystemDataTabView()
                 .environment(model)
-        case .services, .performance:
+        case .services:
+            ServicesTabView()
+                .environment(model)
+        case .performance:
             PlaceholderTab(tab: model.selectedTab)
         }
     }

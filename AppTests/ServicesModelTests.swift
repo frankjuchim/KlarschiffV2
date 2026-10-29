@@ -251,6 +251,9 @@ private let removableIDs: Set<String> = ["user/com.example.useragent", "allUsers
     #expect(Set(report.results.compactMap(\.itemID)) == removableIDs)
     #expect(model.lastRemovalWasDryRun == false)
     #expect(model.lastRemovalWasLegacy == false)
+    #expect(model.lastRemovalWasServices)
+    #expect(ResultBanner.headline(report, legacy: model.lastRemovalWasLegacy, services: model.lastRemovalWasServices,
+                                  dryRun: model.lastRemovalWasDryRun) == "Hintergrunddienste entfernt.")
     #expect(model.isRemoving == false)
     // Vorher frisch eingelesen und danach neu geladen; die Auswahl ist leer.
     #expect(source.calls == 3)
@@ -272,6 +275,106 @@ private let removableIDs: Set<String> = ["user/com.example.useragent", "allUsers
     #expect(log.events == ["trash dryRun=true user/com.example.useragent"])
     #expect(model.lastRemovalWasDryRun)
     #expect(model.lastRemoval?.failures.isEmpty == true)
+    #expect(model.lastRemovalWasServices)
+    #expect(ResultBanner.headline(model.lastRemoval!, legacy: false, services: true, dryRun: true)
+        == "Hintergrunddienste entfernt. (Trockenlauf)")
+}
+
+// MARK: - Tab-Ansicht
+
+@Test @MainActor func servicesConfirmNeedsAcknowledgementOnlyWithAdminSteps() async {
+    let home = tempHome()
+    let model = makeModel(home: home, source: ServiceSource(fixtureItems(home)))
+    await model.reloadServices()
+
+    // Nur Benutzer-Agent: Papierkorb, kein Häkchen, Return erlaubt.
+    model.toggleService("user/com.example.useragent")
+    let userPlan = model.makePlan(tab: .services, options: RemovalOptions())
+    #expect(ConfirmSheet.isServicesPlan(userPlan))
+    #expect(ConfirmSheet.title(userPlan) == "Hintergrunddienste entfernen?")
+    #expect(!ConfirmSheet.requiresSystemAcknowledgement(userPlan))
+    #expect(ConfirmSheet.allowsDefaultAction(userPlan))
+    #expect(ConfirmSheet.systemWarningLines(userPlan).isEmpty)
+
+    // Mit System-Daemon: Admin-Schritte → rotes Häkchen, nie Return.
+    model.toggleService("system/com.example.daemon")
+    let adminPlan = model.makePlan(tab: .services, options: RemovalOptions())
+    #expect(ConfirmSheet.requiresSystemAcknowledgement(adminPlan))
+    #expect(!ConfirmSheet.allowsDefaultAction(adminPlan))
+    #expect(ConfirmSheet.systemWarningLines(adminPlan) == [ConfirmSheet.servicesAdminWarning])
+}
+
+@Test @MainActor func servicesCommandPreviewInExecutionOrder() async {
+    let home = tempHome()
+    let model = makeModel(home: home, source: ServiceSource(fixtureItems(home)))
+    await model.reloadServices()
+    let uid = getuid()
+    let lines = ServiceCommandPreview.lines(model.serviceFindings(for: removableIDs))
+    #expect(lines == [
+        "/bin/launchctl bootout gui/\(uid)/com.example.useragent",
+        "/bin/launchctl bootout gui/\(uid)/com.example.allagent",
+        "In den Papierkorb: " + home.appending(path: "Library/LaunchAgents/com.example.useragent.plist").path,
+        "sudo /bin/rm -f /Library/LaunchAgents/com.example.allagent.plist",
+        "sudo /bin/launchctl bootout system/com.example.daemon",
+        "sudo /bin/rm -f /Library/LaunchDaemons/com.example.daemon.plist",
+    ])
+    #expect(ServiceCommandPreview.lines(model.serviceFindings(for: ["user/com.example.fine"])).isEmpty)
+}
+
+@Test func servicesSectionsGroupByScope() {
+    let home = tempHome()
+    let s = ServicesTabView.sections(fixtureItems(home))
+    #expect(s.orphaned.map(\.id) == ["user/com.example.useragent", "allUsers/com.example.allagent",
+                                     "system/com.example.daemon", "loginItem/com.example.login"])
+    #expect(s.active.map(\.scope) == [.user])
+    #expect(s.active.first?.items.map(\.id) == ["user/com.example.fine", "user/de.frankjuchim.klarschiff2.check.weekly"])
+
+    let more = [svc("a", .system, home: home, orphaned: false), svc("b", .loginItem, home: home, orphaned: false),
+                svc("c", .user, home: home, orphaned: false), svc("d", .allUsers, home: home, orphaned: false)]
+    #expect(ServicesTabView.sections(more).active.map(\.scope) == [.user, .allUsers, .system, .loginItem])
+    #expect(ServicesTabView.sections([]).orphaned.isEmpty && ServicesTabView.sections([]).active.isEmpty)
+}
+
+@Test func servicesHeadlineTexts() {
+    #expect(ServicesTabView.headline(orphanedCount: 0) == (nil, "Keine verwaisten Hintergrunddienste"))
+    #expect(ServicesTabView.headline(orphanedCount: 1) == ("1", "verwaister Hintergrunddienst"))
+    #expect(ServicesTabView.headline(orphanedCount: 3) == ("3", "verwaiste Hintergrunddienste"))
+    #expect(ServicesTabView.subtitle == "Dienste, deren App gelöscht wurde, laufen sonst weiter oder starten ins Leere.")
+}
+
+@Test func serviceRowTexts() {
+    let home = tempHome()
+    var installed = svc("com.example.app", .user, home: home, orphaned: false)
+    installed.appURL = URL(filePath: "/Applications/Example.app")
+    #expect(ServiceRow.statusText(installed) == "App ist installiert.")
+    var none = svc("com.example.none", .user, home: home, orphaned: false)
+    none.explanation = "Gehört zu keiner erkennbaren App."
+    #expect(ServiceRow.statusText(none) == "Gehört zu keiner App")
+    var own = svc("de.frankjuchim.klarschiff2.check.weekly", .user, home: home, orphaned: false, own: true)
+    own.explanation = "Das ist der automatische Check von Klarschiff 2. Er bleibt immer erhalten."
+    #expect(ServiceRow.statusText(own) == own.explanation)
+
+    var orphan = svc("com.example.gone", .user, home: home)
+    orphan.programPath = "/Applications/Gone.app/Contents/MacOS/Gone"
+    #expect(ServiceRow.missingText(orphan) == "Programm fehlt: /Applications/Gone.app/Contents/MacOS/Gone")
+    #expect(ServiceRow.revealURL(orphan) == orphan.plistURL)
+
+    var login = svc("com.example.login", .loginItem, home: home, orphaned: false)
+    login.startKind = .atLogin
+    #expect(ServiceRow.startText(login) == "startet bei der Anmeldung")
+    login.startKind = .onDemand
+    #expect(ServiceRow.startText(login) == "ausgeschaltet")
+    #expect(ServiceRow.revealURL(login) == nil)
+    #expect(ServiceRow.startText(none) == "startet bei Bedarf")
+}
+
+@Test func servicesBannerHeadline() {
+    let ok = RemovalReport(results: [], freedBytes: 0, failures: [])
+    #expect(ResultBanner.headline(ok, legacy: false, services: true, dryRun: false) == "Hintergrunddienste entfernt.")
+    let failed = ItemResult(findingID: FindingID(scannerID: "services.orphaned", key: "user"), itemID: "x", outcome: .failed("nein"))
+    let partial = RemovalReport(results: [failed], freedBytes: 0, failures: [failed])
+    #expect(ResultBanner.headline(partial, legacy: false, services: true, dryRun: false) == "Hintergrunddienste nur teilweise entfernt.")
+    #expect(ResultBanner.headline(ok, legacy: false, services: false, dryRun: false) == "\(ByteFormat.string(0)) frei geworden.")
 }
 
 @Test @MainActor func failedBootoutKeepsServicePlist() async throws {

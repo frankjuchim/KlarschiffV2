@@ -15,8 +15,10 @@ struct ConfirmSheet: View {
         let plan = model.makePlan(tab: tab, options: options)
         let groups = Self.groups(for: plan)
         let needsAck = Self.requiresSystemAcknowledgement(plan)
+        let isServices = Self.isServicesPlan(plan)
+        let commands = isServices ? ServiceCommandPreview.lines(plan.allSteps.map(\.0)) : plan.commandPreview
         VStack(alignment: .leading, spacing: 16) {
-            Text("\(ByteFormat.string(plan.totalSize)) aufräumen?")
+            Text(Self.title(plan))
                 .font(.title2.weight(.bold))
             if model.dryRun {
                 Label("Trockenlauf – es wird nichts entfernt.", systemImage: "flask")
@@ -31,7 +33,7 @@ struct ConfirmSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     ForEach(groups) { group in
-                        MethodGroupView(group: group)
+                        MethodGroupView(group: group, showsSizes: !isServices)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -63,7 +65,7 @@ struct ConfirmSheet: View {
                 } label: {
                     Label("Befehle anzeigen", systemImage: "terminal")
                 }
-                .disabled(plan.commandPreview.isEmpty)
+                .disabled(commands.isEmpty)
                 Spacer()
                 Button("Abbrechen", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
@@ -71,17 +73,18 @@ struct ConfirmSheet: View {
                     dismiss()
                     Task { await model.execute(plan) }
                 } label: {
-                    Label("Aufräumen", systemImage: "sparkles")
+                    Label(isServices ? "Entfernen" : "Aufräumen", systemImage: isServices ? "bolt.fill" : "sparkles")
                 }
                 .buttonStyle(GradientButtonStyle())
                 .keyboardShortcut(Self.allowsDefaultAction(plan) ? .defaultAction : nil)
-                .disabled(groups.isEmpty || model.isScanning || model.isRemoving || model.isMeasuringSystemData || model.isChecking || (needsAck && !acknowledged))
+                .disabled(groups.isEmpty || model.isScanning || model.isRemoving || model.isMeasuringSystemData || model.isChecking
+                          || model.isLoadingServices || (needsAck && !acknowledged))
             }
         }
         .padding(24)
         .frame(width: 600)
         .sheet(isPresented: $showCommands) {
-            CommandSheet(title: "Befehle zum Aufräumen", lines: plan.commandPreview)
+            CommandSheet(title: isServices ? "Befehle zum Entfernen" : "Befehle zum Aufräumen", lines: commands)
         }
     }
 
@@ -91,19 +94,37 @@ struct ConfirmSheet: View {
         !requiresSystemAcknowledgement(plan) && plan.deleteSteps.isEmpty && plan.adminSteps.isEmpty
     }
 
-    /// Plant der Plan mindestens einen Systemfund, braucht „Aufräumen“ das Häkchen der Warnkarte.
+    /// Plant der Plan mindestens einen Systemfund oder Admin-Schritte für Hintergrunddienste, braucht „Aufräumen“
+    /// das Häkchen der Warnkarte (TP4: Kategorie `services` mit Admin zählt wie `systemData`).
     nonisolated static func requiresSystemAcknowledgement(_ plan: RemovalPlan) -> Bool {
-        plan.allSteps
-            .contains { $0.0.category == .systemData }
+        plan.allSteps.contains { $0.0.category == .systemData }
+            || plan.adminSteps.contains { $0.0.category == .services }
     }
 
-    /// Warnzeilen der geplanten Systemfunde: „Achtung: “ + volle Warnzeile (Spec §5), ohne Doppelte, in Planreihenfolge.
+    /// Nur Hintergrunddienste im Plan? Dann ohne Bytes („Hintergrunddienste entfernen?“, Knopf „Entfernen“).
+    nonisolated static func isServicesPlan(_ plan: RemovalPlan) -> Bool {
+        !plan.allSteps.isEmpty && plan.allSteps.allSatisfy { $0.0.category == .services }
+    }
+
+    /// Überschrift des Dialogs.
+    nonisolated static func title(_ plan: RemovalPlan) -> String {
+        isServicesPlan(plan) ? "Hintergrunddienste entfernen?" : "\(ByteFormat.string(plan.totalSize)) aufräumen?"
+    }
+
+    nonisolated static let servicesAdminWarning =
+        "Achtung: Die Startdateien unter /Library werden mit deinem Admin-Passwort endgültig gelöscht – nicht über den Papierkorb."
+
+    /// Warnzeilen der geplanten Systemfunde: „Achtung: “ + volle Warnzeile (Spec §5), ohne Doppelte, in Planreihenfolge;
+    /// bei Admin-Schritten für Hintergrunddienste ein Satz zu den Startdateien.
     nonisolated static func systemWarningLines(_ plan: RemovalPlan) -> [String] {
         var out: [String] = []
         for (f, _) in plan.allSteps where f.category == .systemData {
             guard let w = SystemCleanup.warning(for: f.id.scannerID) else { continue }
             let line = "Achtung: " + w
             if !out.contains(line) { out.append(line) }
+        }
+        if plan.adminSteps.contains(where: { $0.0.category == .services }) {
+            out.append(servicesAdminWarning)
         }
         return out
     }
@@ -224,6 +245,8 @@ private struct SystemWarningCard: View {
 
 private struct MethodGroupView: View {
     let group: ConfirmSheet.MethodGroup
+    /// Hintergrunddienste haben keine Größe – dann keine Spalte „Null Byte“.
+    var showsSizes = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -237,9 +260,11 @@ private struct MethodGroupView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text(ByteFormat.string(row.size))
-                        .fontWeight(.semibold)
-                        .monospacedDigit()
+                    if showsSizes {
+                        Text(ByteFormat.string(row.size))
+                            .fontWeight(.semibold)
+                            .monospacedDigit()
+                    }
                 }
                 .padding(.leading, 28)
             }
