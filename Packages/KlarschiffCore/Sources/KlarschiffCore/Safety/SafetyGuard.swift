@@ -63,12 +63,22 @@ public struct SafetyGuard: Sendable {
         }
     }
 
-    /// Produktiv-Variante: `DARWIN_USER_CACHE_DIR` per `confstr`.
-    public static func production(home: URL = URL(filePath: NSHomeDirectory())) -> SafetyGuard {
+    /// Ersatz, wenn `DARWIN_USER_CACHE_DIR` nicht ermittelbar ist (liegt nie unter /private/var/folders → keine Cache-Freigaben).
+    public static let missingUserCacheDirectory = URL(filePath: "/var/empty/klarschiff-no-cache-dir")
+
+    /// `DARWIN_USER_CACHE_DIR` per `confstr`; `nil`, wenn nicht ermittelbar.
+    /// Einzige Quelle für Scan-Kontext und Guard, damit beide nicht auseinanderlaufen.
+    public static func userCacheDirectory() -> URL? {
         var buf = [CChar](repeating: 0, count: Int(PATH_MAX) + 1)
         let n = confstr(_CS_DARWIN_USER_CACHE_DIR, &buf, buf.count)
+        guard n > 0 else { return nil }
         let text = String(decoding: buf.prefix { $0 != 0 }.map(UInt8.init(bitPattern:)), as: UTF8.self)
-        let cache = n > 0 ? URL(filePath: text) : URL(filePath: "/var/empty/klarschiff-no-cache-dir")
+        return text.isEmpty ? nil : URL(filePath: text)
+    }
+
+    /// Produktiv-Variante: `DARWIN_USER_CACHE_DIR` per `userCacheDirectory()`.
+    public static func production(home: URL = URL(filePath: NSHomeDirectory())) -> SafetyGuard {
+        let cache = userCacheDirectory() ?? missingUserCacheDirectory
         return SafetyGuard(home: home, userCacheDir: cache, allowedCacheSubdirs: defaultAllowedCacheSubdirs)
     }
 

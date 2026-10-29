@@ -143,3 +143,9 @@ private let guardUnderTest = SafetyGuard(
         #expect(g.check(URL(filePath: "/opt/anaconda3x")) != .allowed)
     }
 }
+
+@Test func userCacheDirectoryIsUnderVarFolders() throws {
+    let dir = try #require(SafetyGuard.userCacheDirectory())
+    #expect(dir.path.hasPrefix("/var/folders/") || dir.path.hasPrefix("/private/var/folders/"))
+    #expect(dir.standardizedFileURL.lastPathComponent == "C")
+}

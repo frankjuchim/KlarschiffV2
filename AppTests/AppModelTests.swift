@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 import KlarschiffCore
 @testable import Klarschiff
@@ -9,6 +10,19 @@ private struct StubScanner: KlarschiffCore.Scanner {
     let id: String
     let findings: [Finding]
     func scan(_ ctx: ScanContext) async throws -> [Finding] { findings }
+}
+
+/// Liefert beim n-ten Aufruf `rounds[min(n, rounds.count - 1)]` und zählt die Aufrufe.
+private final class SequencedScanner: KlarschiffCore.Scanner, Sendable {
+    let id = "test.scanner"
+    private let rounds: [[Finding]]
+    private let count = Mutex(0)
+    init(_ rounds: [[Finding]]) { self.rounds = rounds }
+    var calls: Int { count.withLock { $0 } }
+    func scan(_ ctx: ScanContext) async throws -> [Finding] {
+        let n = count.withLock { c in defer { c += 1 }; return c }
+        return rounds[min(n, rounds.count - 1)]
+    }
 }
 
 private struct NoRunningApps: RunningApps {
@@ -55,7 +69,13 @@ private func tempKeepFile() -> URL {
 }
 
 @MainActor
-private func makeModel(_ findings: [Finding], keepFile: URL = tempKeepFile(), dryRun: Bool = false) -> AppModel {
+private func makeModel(
+    _ findings: [Finding], keepFile: URL = tempKeepFile(), dryRun: Bool = false,
+    scanner: (any KlarschiffCore.Scanner)? = nil,
+    emptyTrash: @escaping @Sendable (Bool) async throws -> RemovalReport = { _ in
+        RemovalReport(results: [], freedBytes: 0, failures: [])
+    }
+) -> AppModel {
     let disk: @Sendable () throws -> DiskSpace = { DiskSpace(free: 100, total: 1_000) }
     let safety = SafetyGuard.production()
     let runner = RemovalRunner(
@@ -64,7 +84,7 @@ private func makeModel(_ findings: [Finding], keepFile: URL = tempKeepFile(), dr
         runningApps: NoRunningApps(), diskSpace: disk)
     let home = FileManager.default.temporaryDirectory.appending(path: "klarschiff-apptests-home")
     let deps = AppDependencies(
-        engine: ScanEngine(scanners: [StubScanner(id: "test.scanner", findings: findings)]),
+        engine: ScanEngine(scanners: [scanner ?? StubScanner(id: "test.scanner", findings: findings)]),
         keepList: KeepList(fileURL: keepFile),
         runner: runner,
         diskSpace: disk,
@@ -79,7 +99,7 @@ private func makeModel(_ findings: [Finding], keepFile: URL = tempKeepFile(), dr
         photos: { _ in nil },
         trash: { _ in 0 },
         fullDiskAccess: { true },
-        emptyTrash: { _ in RemovalReport(results: [], freedBytes: 0, failures: []) },
+        emptyTrash: emptyTrash,
         dryRun: dryRun,
         terminate: { _ in false })
     return AppModel(dependencies: deps)
@@ -215,15 +235,102 @@ private func makeModel(_ findings: [Finding], keepFile: URL = tempKeepFile(), dr
 
 @Test @MainActor func executeStoresReportAndRescans() async {
     let safe = finding("safe", category: .appCaches, risk: .safe, items: [item("a", size: 10)])
-    let model = makeModel([safe], dryRun: true)
+    let after = finding("after", category: .appCaches, risk: .review, items: [item("z", size: 3)])
+    let scanner = SequencedScanner([[safe], [after]])
+    let model = makeModel([], dryRun: true, scanner: scanner)
     await model.scan(includeSlowChecks: false)
+    #expect(scanner.calls == 1)
 
     await model.execute(model.makePlan(tab: .storage, options: RemovalOptions()))
 
     #expect(model.lastRemoval?.results.count == 1)
     #expect(model.lastRemoval?.failures.isEmpty == true)
     #expect(model.removalProgress == nil)
-    #expect(model.report?.findings.count == 1)
+    #expect(model.isRemoving == false)
+    #expect(scanner.calls == 2)
+    #expect(model.report?.findings.map(\.id) == [after.id])
+    #expect(model.selection.isEmpty)
+    #expect(model.lastError == nil)
+}
+
+@Test @MainActor func executeRefusesLivePlanInDryRun() async {
+    let safe = finding("safe", category: .appCaches, risk: .safe, items: [item("a", size: 10)])
+    let scanner = SequencedScanner([[safe]])
+    let model = makeModel([], dryRun: true, scanner: scanner)
+    await model.scan(includeSlowChecks: false)
+
+    let livePlan = RemovalPlan(findings: [safe], selection: model.selection, options: RemovalOptions(dryRun: false))
+    await model.execute(livePlan)
+
+    #expect(model.lastRemoval == nil)
+    #expect(model.lastError != nil)
+    #expect(scanner.calls == 1)       // kein Neu-Scan, nichts ausgeführt
+}
+
+@Test @MainActor func removalBlockedWhileScanningOrRemoving() async {
+    let safe = finding("safe", category: .appCaches, risk: .safe, items: [item("a", size: 10)])
+    let scanner = SequencedScanner([[safe]])
+    let model = makeModel([], dryRun: true, scanner: scanner)
+    await model.scan(includeSlowChecks: false)
+    let plan = model.makePlan(tab: .storage, options: RemovalOptions())
+
+    model.isScanning = true
+    await model.execute(plan)
+    await model.emptyTrash()
+    #expect(model.lastRemoval == nil)
+    model.isScanning = false
+
+    model.isRemoving = true
+    await model.execute(plan)
+    await model.emptyTrash()
+    await model.scan(includeSlowChecks: false)
+    #expect(model.lastRemoval == nil)
+    #expect(scanner.calls == 1)       // kein Scan während einer Entfernung
+}
+
+@Test @MainActor func keepFailurePublishesError() async throws {
+    // Elternpfad ist eine Datei → Verzeichnis kann nicht angelegt werden.
+    let blocker = FileManager.default.temporaryDirectory.appending(path: "klarschiff-apptests-blocker-\(UUID().uuidString)")
+    try Data().write(to: blocker)
+    let safe = finding("safe", category: .appCaches, risk: .safe, items: [item("a", size: 10)])
+    let model = makeModel([safe], keepFile: blocker.appending(path: "keep.json"))
+    await model.scan(includeSlowChecks: false)
+
+    await model.keep(safe.id)
+
+    #expect(model.kept.isEmpty)
+    #expect(model.selection[safe.id] == ["a"])
+    #expect(model.lastError == "Konnte die Behalten-Liste nicht speichern.")
+
+    model.lastError = nil
+    await model.unkeep(safe.id)
+    #expect(model.lastError == "Konnte die Behalten-Liste nicht speichern.")
+}
+
+@Test @MainActor func emptyTrashFailurePublishesError() async {
+    let model = makeModel([], emptyTrash: { _ in throw TrashError.unreadable })
+    await model.emptyTrash()
+    #expect(model.lastRemoval == nil)
+    #expect(model.lastError == "Papierkorb konnte nicht gelesen werden – braucht Vollzugriff.")
+    #expect(model.isRemoving == false)
+}
+
+@Test func liveTrashListingThrowsWhenUnreadable() async throws {
+    let fm = FileManager.default
+    let home = fm.temporaryDirectory.appending(path: "klarschiff-apptests-trash-\(UUID().uuidString)")
+    try fm.createDirectory(at: home, withIntermediateDirectories: true)
+    let deleter = DeleteRemover(guard: SafetyGuard.production(home: home))
+    let disk: @Sendable () throws -> DiskSpace = { DiskSpace(free: 1, total: 2) }
+
+    // Kein Papierkorb-Ordner: leerer Bericht, kein Fehler.
+    let empty = try await AppDependencies.emptyTrashContents(home: home, remover: deleter, disk: disk, dryRun: true)
+    #expect(empty.results.isEmpty)
+
+    // `.Trash` ist nicht als Ordner lesbar → Fehler statt scheinbarem Erfolg.
+    try Data("x".utf8).write(to: home.appending(path: ".Trash"))
+    await #expect(throws: TrashError.unreadable) {
+        _ = try await AppDependencies.emptyTrashContents(home: home, remover: deleter, disk: disk, dryRun: true)
+    }
 }
 
 @Test @MainActor func failuresMapToTabByScannerCategory() {

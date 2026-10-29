@@ -3,6 +3,18 @@ import Observation
 import KlarschiffCore
 
 /// Alles, was `AppModel` von außen braucht – in Tests durch Attrappen ersetzbar.
+enum TrashError: Error, Equatable {
+    case unreadable
+}
+
+/// Freundliche Fehlermeldungen für die Oberfläche.
+enum AppErrorText {
+    static let keepList = "Konnte die Behalten-Liste nicht speichern."
+    static let trashUnreadable = "Papierkorb konnte nicht gelesen werden – braucht Vollzugriff."
+    static let trashFailed = "Papierkorb konnte nicht geleert werden."
+    static let dryRunPlan = "Trockenlauf aktiv – ein Plan ohne Trockenlauf wurde nicht ausgeführt."
+}
+
 struct AppDependencies: Sendable {
     var engine: ScanEngine
     var keepList: KeepList
@@ -13,7 +25,8 @@ struct AppDependencies: Sendable {
     var photos: @Sendable (ScanContext) async -> PhotosInfo?
     var trash: @Sendable (ScanContext) async -> Int64?
     var fullDiskAccess: @Sendable () -> Bool
-    var emptyTrash: @Sendable (_ dryRun: Bool) async -> RemovalReport
+    /// Wirft `TrashError.unreadable`, wenn der Papierkorb nicht gelesen werden kann (z. B. ohne Vollzugriff).
+    var emptyTrash: @Sendable (_ dryRun: Bool) async throws -> RemovalReport
     var dryRun: Bool
     var terminate: @Sendable (AppRef) async -> Bool
 }
@@ -33,8 +46,11 @@ final class AppModel {
     var selection: [FindingID: Set<String>] = [:]
     var kept: Set<FindingID> = []
     var lastRemoval: RemovalReport?
+    /// Läuft gerade eine Entfernung (Aufräumen oder Papierkorb leeren)? Sperrt Scan und weitere Entfernungen.
     var isRemoving = false
     var removalProgress: String?
+    /// Letzter Fehler in Alltagssprache (Behalten-Liste, Papierkorb …); die Oberfläche zeigt und löscht ihn.
+    var lastError: String?
 
     /// Trockenlauf (`--dry-run` / `KLARSCHIFF_DRY_RUN=1`): wird in jeden Plan erzwungen.
     let dryRun: Bool
@@ -58,7 +74,7 @@ final class AppModel {
     // MARK: - Scan
 
     func scan(includeSlowChecks: Bool) async {
-        guard !isScanning else { return }
+        guard !isScanning, !isRemoving else { return }
         isScanning = true
         scanProgress = 0
         scanGeneration += 1
@@ -186,6 +202,7 @@ final class AppModel {
         do {
             try await deps.keepList.add(id)
         } catch {
+            lastError = AppErrorText.keepList
             return
         }
         kept.insert(id)
@@ -196,6 +213,7 @@ final class AppModel {
         do {
             try await deps.keepList.remove(id)
         } catch {
+            lastError = AppErrorText.keepList
             return
         }
         kept.remove(id)
@@ -211,7 +229,12 @@ final class AppModel {
     }
 
     func execute(_ plan: RemovalPlan) async {
-        guard !isRemoving else { return }
+        guard !isRemoving, !isScanning else { return }
+        // Schutz in der Tiefe: ein anderswo gebauter Plan darf im Trockenlauf nie echt laufen.
+        if dryRun, !plan.options.dryRun {
+            lastError = AppErrorText.dryRunPlan
+            return
+        }
         isRemoving = true
         removalProgress = "Bereite vor …"
         let result = await deps.runner.run(plan) { [weak self] message in
@@ -228,10 +251,16 @@ final class AppModel {
     }
 
     func emptyTrash() async {
-        guard !isRemoving else { return }
+        guard !isRemoving, !isScanning else { return }
         isRemoving = true
         removalProgress = "Papierkorb wird geleert …"
-        lastRemoval = await deps.emptyTrash(dryRun)
+        do {
+            lastRemoval = try await deps.emptyTrash(dryRun)
+        } catch TrashError.unreadable {
+            lastError = AppErrorText.trashUnreadable
+        } catch {
+            lastError = AppErrorText.trashFailed
+        }
         isRemoving = false
         removalProgress = nil
         trashBytes = await deps.trash(deps.makeContext(false))
@@ -284,7 +313,7 @@ extension AppDependencies {
 
     static func live() -> AppDependencies {
         let home = URL(filePath: NSHomeDirectory())
-        let cacheDir = userCacheDirectory()
+        let cacheDir = SafetyGuard.userCacheDirectory() ?? SafetyGuard.missingUserCacheDirectory
         let commands = ProcessCommandRunner()
         let tools = ToolLocator.standard
         let apps = WorkspaceRunningApps()
@@ -316,7 +345,7 @@ extension AppDependencies {
             photos: { ctx in await photosInfo(ctx) },
             trash: { ctx in await trashSize(ctx) },
             fullDiskAccess: fda,
-            emptyTrash: { dryRun in await emptyTrashContents(home: home, remover: deleter, disk: disk, dryRun: dryRun) },
+            emptyTrash: { dryRun in try await emptyTrashContents(home: home, remover: deleter, disk: disk, dryRun: dryRun) },
             dryRun: isDryRunRequested,
             terminate: { ref in
                 guard await apps.terminate(ref) else { return false }
@@ -328,20 +357,20 @@ extension AppDependencies {
             })
     }
 
-    /// `DARWIN_USER_CACHE_DIR` per `confstr`, wie `SafetyGuard.production`.
-    private static func userCacheDirectory() -> URL {
-        var buf = [CChar](repeating: 0, count: Int(PATH_MAX) + 1)
-        let n = confstr(_CS_DARWIN_USER_CACHE_DIR, &buf, buf.count)
-        let text = String(decoding: buf.prefix { $0 != 0 }.map(UInt8.init(bitPattern:)), as: UTF8.self)
-        return n > 0 ? URL(filePath: text) : URL(filePath: "/var/empty/klarschiff-no-cache-dir")
-    }
-
     /// Löscht jedes Kind von `~/.Trash` über `DeleteRemover` (also mit SafetyGuard).
-    private static func emptyTrashContents(
+    /// Fehlt der Ordner, ist nichts zu tun; ist er nicht lesbar, wirft die Funktion `TrashError.unreadable`.
+    static func emptyTrashContents(
         home: URL, remover: DeleteRemover, disk: @Sendable () throws -> DiskSpace, dryRun: Bool
-    ) async -> RemovalReport {
+    ) async throws -> RemovalReport {
         let trashDir = home.appending(path: ".Trash")
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: trashDir.path)) ?? []
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: trashDir.path) else { return RemovalReport(results: [], freedBytes: 0, failures: []) }
+        let names: [String]
+        do {
+            names = try fm.contentsOfDirectory(atPath: trashDir.path)
+        } catch {
+            throw TrashError.unreadable
+        }
         guard !names.isEmpty else { return RemovalReport(results: [], freedBytes: 0, failures: []) }
         let items = names.sorted().map { FindingItem(id: $0, url: trashDir.appending(path: $0), name: $0) }
         let finding = Finding(
