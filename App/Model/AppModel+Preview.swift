@@ -290,6 +290,7 @@ private enum PreviewSystemData {
 
 private struct PreviewNotifier: Notifier {
     func requestAuthorization() async -> Bool { true }
+    func isAuthorized() async -> Bool { true }
     func send(_ n: CheckNotification) async {}
 }
 

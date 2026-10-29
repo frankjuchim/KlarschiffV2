@@ -42,13 +42,23 @@ private final class FakeAgentService: AgentService, Sendable {
     func status(_ plist: String) -> AgentStatus { state.withLock { $0.statuses[plist] ?? .notRegistered } }
 }
 
+/// Zählt Erlaubnis-Anfragen (Dialog) und Status-Abfragen getrennt.
 private final class FakeNotifier: Notifier, Sendable {
     private let allowed: Bool
-    private let sentStore = Mutex<[CheckNotification]>([])
+    private let store = Mutex<(sent: [CheckNotification], requests: Int, checks: Int)>(([], 0, 0))
     init(allowed: Bool) { self.allowed = allowed }
-    var sent: [CheckNotification] { sentStore.withLock { $0 } }
-    func requestAuthorization() async -> Bool { allowed }
-    func send(_ n: CheckNotification) async { sentStore.withLock { $0.append(n) } }
+    var sent: [CheckNotification] { store.withLock { $0.sent } }
+    var requestCalls: Int { store.withLock { $0.requests } }
+    var isAuthorizedCalls: Int { store.withLock { $0.checks } }
+    func requestAuthorization() async -> Bool {
+        store.withLock { $0.requests += 1 }
+        return allowed
+    }
+    func isAuthorized() async -> Bool {
+        store.withLock { $0.checks += 1 }
+        return allowed
+    }
+    func send(_ n: CheckNotification) async { store.withLock { $0.sent.append(n) } }
 }
 
 private struct StubScanner: KlarschiffCore.Scanner {
@@ -217,6 +227,81 @@ private func makeModel(
     #expect(notifier.sent.first?.title == "Klarschiff 2")
     #expect(model.notificationsDenied == false)
     #expect(model.isChecking == false)
+    // Der Check fragt nie (kein Dialog aus dem Hintergrund), er liest nur den Entscheid.
+    #expect(notifier.requestCalls == 0)
+    #expect(notifier.isAuthorizedCalls == 1)
+}
+
+@Test @MainActor func onlySwitchingOnRequestsAuthorization() async {
+    let notifier = FakeNotifier(allowed: false)
+    let model = makeModel(notifier: notifier)
+
+    await model.setCheckSchedule(.off)
+    #expect(notifier.requestCalls == 0)
+
+    await model.setCheckSchedule(.weekly)
+    #expect(notifier.requestCalls == 1)
+    #expect(model.notificationsDenied)
+
+    await model.runCheckNow()
+    #expect(notifier.requestCalls == 1)
+}
+
+@Test @MainActor func noRemovalOrScanDuringCheck() async {
+    let model = makeModel()
+    model.isChecking = true
+
+    await model.scan(includeSlowChecks: false)
+    #expect(model.report == nil)
+    await model.emptyTrash()
+    #expect(model.lastRemoval == nil)
+    await model.execute(RemovalPlan(findings: [], selection: [:], options: RemovalOptions(dryRun: true)))
+    #expect(model.lastRemoval == nil)
+}
+
+// MARK: - Wächter
+
+@Test func watchdogEndsHangingRun() async {
+    let start = ContinuousClock.now
+    // Hängt für immer und ignoriert Abbruch.
+    let result: Int? = await BackgroundCheck.withTimeout(.milliseconds(50)) {
+        await withUnsafeContinuation { (_: UnsafeContinuation<Int, Never>) in }
+    }
+    #expect(result == nil)
+    #expect(ContinuousClock.now - start < .seconds(5))
+}
+
+@Test func watchdogPassesFastRunThrough() async {
+    let result = await BackgroundCheck.withTimeout(.seconds(10)) { 42 }
+    #expect(result == 42)
+}
+
+// MARK: - LaunchAgent-plists
+
+private func plistDict(_ url: URL) throws -> [String: Any] {
+    let data = try Data(contentsOf: url)
+    return try #require(try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
+}
+
+@Test(arguments: [
+    (CheckScheduler.weeklyPlist, ["Weekday": 0, "Hour": 10, "Minute": 0]),
+    (CheckScheduler.monthlyPlist, ["Day": 1, "Hour": 10, "Minute": 0]),
+])
+func launchAgentPlistsMatchSpec(name: String, calendar: [String: Int]) throws {
+    let source = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        .appending(path: "App/LaunchAgents/\(name)")
+    let p = try plistDict(source)
+    #expect(p["Label"] as? String == String(name.dropLast(".plist".count)))
+    #expect(p["BundleProgram"] as? String == "Contents/MacOS/Klarschiff 2")
+    #expect(p["ProgramArguments"] as? [String] == ["Klarschiff 2", "--check"])
+    #expect(p["StartCalendarInterval"] as? [String: Int] == calendar)
+    #expect(p["ProcessType"] as? String == "Background")
+    #expect(p["LowPriorityIO"] as? Bool == true)
+    #expect(p["Nice"] as? Int == 10)
+    #expect(p["AssociatedBundleIdentifiers"] as? [String] == ["de.frankjuchim.klarschiff2"])
+    // Dieselbe Datei liegt im gebauten Bundle (Test-Host = App).
+    let bundled = Bundle.main.bundleURL.appending(path: "Contents/Library/LaunchAgents/\(name)")
+    #expect(try Data(contentsOf: bundled) == Data(contentsOf: source))
 }
 
 @Test @MainActor func deniedNotificationsStillWritesHistory() async {

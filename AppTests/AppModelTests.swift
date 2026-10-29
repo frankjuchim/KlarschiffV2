@@ -50,6 +50,7 @@ private struct NoopExecutor: PrivilegedExecutor {
 
 private struct SilentNotifier: Notifier {
     func requestAuthorization() async -> Bool { false }
+    func isAuthorized() async -> Bool { false }
     func send(_ n: CheckNotification) async {}
 }
 

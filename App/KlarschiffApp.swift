@@ -45,8 +45,13 @@ struct KlarschiffApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     let model: AppModel?
     private let isCheckMode: Bool
-    /// `--check`: Erst nach dem Lauf beenden – SwiftUI beendet eine Ein-Fenster-App sonst, sobald kein Fenster offen ist.
+    /// `--check`: Erst nach dem Lauf (oder dem Wächter) beenden – SwiftUI beendet eine Ein-Fenster-App sonst,
+    /// sobald kein Fenster offen ist.
     private var checkFinished = false
+    /// Ein Beenden-Wunsch wartet (`.terminateLater`) auf das Ende des Laufs.
+    private var terminationPending = false
+    /// Abmelden/Ausschalten/Neustart: sofort beenden, ein verlorener Check ist egal.
+    private var systemIsPoweringOff = false
 
     override init() {
         isCheckMode = BackgroundCheck.isRequested && !KlarschiffApp.isTestHost
@@ -67,21 +72,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard isCheckMode else { return }
         for window in NSApp.windows { window.close() }
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.willPowerOffNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.systemIsPoweringOff = true }
+        }
         Task { @MainActor in
-            _ = await BackgroundCheck.run(dependencies: .live())
+            // Wächter: ein hängender Lauf endet nach spätestens 10 Minuten (dann ohne Verlaufseintrag).
+            let outcome = await BackgroundCheck.withTimeout(BackgroundCheck.headlessTimeout) {
+                await BackgroundCheck.run(dependencies: .live())
+            }
             // `send` kehrt zurück, sobald das System die Mitteilung angenommen hat; kurzer Puffer zur Sicherheit.
-            try? await Task.sleep(for: .seconds(1))
-            checkFinished = true
+            if outcome?.notification != nil { try? await Task.sleep(for: .seconds(1)) }
+            finishCheck()
+        }
+    }
+
+    private func finishCheck() {
+        checkFinished = true
+        if terminationPending {
+            terminationPending = false
+            NSApp.reply(toApplicationShouldTerminate: true)
+        } else {
             NSApp.terminate(nil)
         }
+    }
+
+    /// Verlauf und Anmeldestatus können sich durch einen Hintergrund-Lauf geändert haben.
+    func applicationDidBecomeActive(_ notification: Notification) {
+        guard let model else { return }
+        model.refreshAgentStatus()
+        Task { await model.loadCheckHistory() }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         !isCheckMode
     }
 
+    /// Nie ein endgültiges Nein: während des Laufs `.terminateLater` (Antwort beim Lauf- oder Wächter-Ende),
+    /// beim Abmelden/Ausschalten sofort.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        (isCheckMode && !checkFinished) ? .terminateCancel : .terminateNow
+        guard isCheckMode, !checkFinished, !systemIsPoweringOff, !Self.isSystemQuit() else { return .terminateNow }
+        terminationPending = true
+        return .terminateLater
+    }
+
+    /// Kommt das Beenden vom System (Abmelden, Neustart, Ausschalten)? Steht im Quit-Apple-Event.
+    private static func isSystemQuit() -> Bool {
+        guard let event = NSAppleEventManager.shared().currentAppleEvent,
+              event.eventClass == kCoreEventClass, event.eventID == kAEQuitApplication,
+              let reason = event.attributeDescriptor(forKeyword: kAEQuitReason)?.enumCodeValue else { return false }
+        return [kAELogOut, kAEReallyLogOut, kAEShowRestartDialog, kAEShowShutdownDialog, kAERestart, kAEShutDown]
+            .map { OSType($0) }.contains(reason)
     }
 
     /// Klick auf die Mitteilung: App nach vorn, Ziel-Tab setzen.

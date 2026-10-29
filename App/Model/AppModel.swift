@@ -128,8 +128,8 @@ final class AppModel {
 
     // MARK: - Automatischer Check
 
-    /// Meldet den passenden LaunchAgent an (die anderen ab) und merkt sich die Wahl. Beim Einschalten wird
-    /// nach der Mitteilungs-Erlaubnis gefragt. Fehler landen in `lastError`, der Status in `agentStatus`.
+    /// Meldet den passenden LaunchAgent an (die anderen ab) und merkt sich die Wahl. Nur hier – beim Einschalten,
+    /// mit offenem Fenster – wird nach der Mitteilungs-Erlaubnis gefragt, nie im Hintergrund. Fehler landen in `lastError`, der Status in `agentStatus`.
     func setCheckSchedule(_ schedule: CheckSchedule) async {
         checkSchedule = schedule
         defaults.set(schedule.rawValue, forKey: Self.checkScheduleDefaultsKey)
@@ -188,7 +188,7 @@ final class AppModel {
     // MARK: - Scan
 
     func scan(includeSlowChecks: Bool) async {
-        guard !isScanning, !isRemoving, !isMeasuringSystemData else { return }
+        guard !isScanning, !isRemoving, !isMeasuringSystemData, !isChecking else { return }
         isScanning = true
         scanProgress = 0
         scanGeneration += 1
@@ -236,7 +236,7 @@ final class AppModel {
     // MARK: - Systemdaten
 
     func measureSystemData() async {
-        guard !isMeasuringSystemData, !isScanning, !isRemoving else { return }
+        guard !isMeasuringSystemData, !isScanning, !isRemoving, !isChecking else { return }
         hasStartedSystemMeasurement = true
         isMeasuringSystemData = true
         systemDataProgress = 0
@@ -375,7 +375,7 @@ final class AppModel {
     }
 
     func execute(_ plan: RemovalPlan) async {
-        guard !isRemoving, !isScanning, !isMeasuringSystemData else { return }
+        guard !isRemoving, !isScanning, !isMeasuringSystemData, !isChecking else { return }
         // Schutz in der Tiefe: ein anderswo gebauter Plan darf im Trockenlauf nie echt laufen.
         if dryRun, !plan.options.dryRun {
             lastError = AppErrorText.dryRunPlan
@@ -410,7 +410,7 @@ final class AppModel {
     }
 
     func emptyTrash() async {
-        guard !isRemoving, !isScanning, !isMeasuringSystemData else { return }
+        guard !isRemoving, !isScanning, !isMeasuringSystemData, !isChecking else { return }
         isRemoving = true
         removalLabels = [:]
         removalProgress = "Papierkorb wird geleert …"

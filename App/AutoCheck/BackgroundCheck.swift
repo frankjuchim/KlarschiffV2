@@ -1,5 +1,6 @@
 import Foundation
 import KlarschiffCore
+import Synchronization
 
 /// Alles, was der löschfreie Check braucht – bewusst ohne Remover.
 struct CheckDependencies: Sendable {
@@ -31,10 +32,34 @@ enum BackgroundCheck {
             measureSystemRoots: deps.measureSystemRoots, diskSpace: deps.diskSpace)
         let snapshot = await runner.run(deps.makeContext(false))
         let notification = CheckNotificationText.make(snapshot)
-        // Abgelehnte Mitteilungen: Verlauf ist schon geschrieben, die Oberfläche zeigt einen Hinweis.
-        let allowed = await deps.notifier.requestAuthorization()
+        // Nie fragen (kein Dialog aus dem Hintergrund) – nur den gespeicherten Entscheid lesen. Abgelehnt oder
+        // nie erlaubt: Verlauf ist schon geschrieben, die Oberfläche zeigt einen Hinweis.
+        let allowed = await deps.notifier.isAuthorized()
         if allowed, let notification { await deps.notifier.send(notification) }
         return Outcome(snapshot: snapshot, notification: notification, notificationsAllowed: allowed)
+    }
+
+    /// Wächter für den kopflosen Lauf: höchstens so lange warten, dann beenden.
+    static let headlessTimeout: Duration = .seconds(600)
+
+    /// Wartet auf `operation`, höchstens `timeout`; danach `nil` (die Arbeit wird abgebrochen, aber nicht abgewartet –
+    /// auch eine Operation, die Abbruch ignoriert, hält den Aufrufer nicht fest).
+    static func withTimeout<T: Sendable>(
+        _ timeout: Duration, _ operation: @escaping @Sendable () async -> T
+    ) async -> T? {
+        await withCheckedContinuation { (continuation: CheckedContinuation<T?, Never>) in
+            let pending = Mutex<CheckedContinuation<T?, Never>?>(continuation)
+            let work = Task {
+                let result = await operation()
+                pending.withLock { $0.take() }?.resume(returning: result)
+            }
+            Task {
+                try? await Task.sleep(for: timeout)
+                guard let c = pending.withLock({ $0.take() }) else { return }
+                work.cancel()
+                c.resume(returning: nil)
+            }
+        }
     }
 
     /// Produktion: Wurzel-Systembereiche ohne Home und ohne Aufräum-Scanner messen; „nicht zuordenbar“ zählt nicht.

@@ -4,8 +4,10 @@ import KlarschiffCore
 
 /// Sendet die eine Check-Mitteilung – in Tests eine Attrappe.
 protocol Notifier: Sendable {
-    /// Fragt beim ersten Mal nach der Erlaubnis; danach liefert es den gespeicherten Entscheid.
+    /// Fragt beim ersten Mal nach der Erlaubnis (System-Dialog!); nur beim Einschalten des Checks aufrufen.
     func requestAuthorization() async -> Bool
+    /// Liest den gespeicherten Entscheid, ohne zu fragen – für den Check-Lauf.
+    func isAuthorized() async -> Bool
     func send(_ n: CheckNotification) async
 }
 
@@ -15,6 +17,13 @@ struct UserNotificationCenterNotifier: Notifier {
 
     func requestAuthorization() async -> Bool {
         (try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])) ?? false
+    }
+
+    func isAuthorized() async -> Bool {
+        switch await UNUserNotificationCenter.current().notificationSettings().authorizationStatus {
+        case .authorized, .provisional: true
+        default: false
+        }
     }
 
     /// Kehrt zurück, sobald das System die Mitteilung angenommen hat (sofortige Zustellung, kein Auslöser).
