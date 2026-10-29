@@ -14,17 +14,19 @@ public struct SafetyGuard: Sendable {
     ]
 
     private let homeParts: [String]
-    private let cacheParts: [String]
+    private let cacheParts: [String]?
     private let allowedCache: Set<String>
+    private let isValid: Bool
 
     private static let reasonSystem = "Geschützter Systemordner"
     private static let reasonCreds = "Zugangsdaten werden nie angefasst"
     private static let reasonBrew = "Nur über Homebrew entfernbar"
     private static let reasonOutside = "Liegt außerhalb der erlaubten Ordner"
     private static let reasonSymlink = "Symlink zeigt aus dem erlaubten Ordner heraus"
+    private static let reasonInvalid = "Ungültige Sicherheitskonfiguration – es wird nichts angefasst"
+    private static let reasonUnresolvable = "Pfad lässt sich nicht sicher auflösen"
     private static let reasonHome = "Persönlicher Ordner – wird nie angefasst"
 
-    private static let credentialDirs: Set<String> = [".ssh", ".gnupg", ".aws", ".kube", ".config"]
     private static let toolDirs: Set<String> = [".codex", ".gemini", ".copilot"]
     private static let credentialPatterns = [
         "auth*.json", "credentials*", "config*", "*.toml", ".env", ".env.*", "oauth*", "token*", "keychain*",
@@ -34,33 +36,56 @@ public struct SafetyGuard: Sendable {
         ["opt", "anaconda3"], ["opt", "miniconda3"], ["library", "developer", "xcode"],
     ]
 
+    /// Fest definierte, geschützte Pfade relativ zu Home. Jeder Vorfahre davon ist ebenfalls gesperrt.
+    private static let protectedHomePaths: [[String]] = [
+        [".ssh"], [".gnupg"], [".aws"], [".kube"], [".config"], [".docker", "config.json"],
+        ["library", "keychains"], ["documents"], ["desktop"],
+    ]
+
     public init(home: URL, userCacheDir: URL, allowedCacheSubdirs: Set<String>) {
-        homeParts = Self.canonicalPhysical(home.path).map { $0.lowercased() }
-        cacheParts = Self.canonicalPhysical(userCacheDir.path).map { $0.lowercased() }
         allowedCache = Set(allowedCacheSubdirs.map { $0.lowercased() })
+        let h = Self.canonicalPhysical(home.path)?.map { $0.lowercased() }
+        // Home muss unter /Users/<name> oder /private/var/<...> liegen; sonst ist die Konfiguration ungültig.
+        var valid = false
+        if let h {
+            if h.count >= 2, h[0] == "users" { valid = true }
+            else if h.count >= 3, h[0] == "private", h[1] == "var", h[2] != "folders" { valid = true }
+            else if h.count >= 5, h[0] == "private", h[1] == "var", h[2] == "folders" { valid = true }
+        }
+        isValid = valid
+        homeParts = valid ? h ?? [] : []
+        // Cache-Ordner muss unter /private/var/folders/<a>/<b>/<C> liegen; sonst keine Cache-Freigaben.
+        if let c = Self.canonicalPhysical(userCacheDir.path)?.map({ $0.lowercased() }),
+           c.count >= 6, c[0] == "private", c[1] == "var", c[2] == "folders" {
+            cacheParts = c
+        } else {
+            cacheParts = nil
+        }
     }
 
     /// Produktiv-Variante: `DARWIN_USER_CACHE_DIR` per `confstr`.
     public static func production(home: URL = URL(filePath: NSHomeDirectory())) -> SafetyGuard {
         var buf = [CChar](repeating: 0, count: Int(PATH_MAX) + 1)
         let n = confstr(_CS_DARWIN_USER_CACHE_DIR, &buf, buf.count)
-        let cache = n > 0 ? URL(filePath: String(cString: buf)) : URL(filePath: "/var/empty/klarschiff-no-cache-dir")
+        let text = String(decoding: buf.prefix { $0 != 0 }.map(UInt8.init(bitPattern:)), as: UTF8.self)
+        let cache = n > 0 ? URL(filePath: text) : URL(filePath: "/var/empty/klarschiff-no-cache-dir")
         return SafetyGuard(home: home, userCacheDir: cache, allowedCacheSubdirs: defaultAllowedCacheSubdirs)
     }
 
     public func check(_ url: URL) -> SafetyVerdict {
+        guard isValid else { return .denied(Self.reasonInvalid) }
         let raw = url.path
-        guard raw.hasPrefix("/") else { return .denied(Self.reasonOutside) }
+        guard raw.unicodeScalars.first == "/" else { return .denied(Self.reasonOutside) }
 
-        let lexical = Self.aliased(Self.normalize(raw.split(separator: "/").map(String.init)))
+        let lexical = Self.aliased(Self.normalize(Self.split(raw)))
         let lexicalLower = lexical.map { $0.lowercased() }
         let verdict = evaluate(lexicalLower)
         if case .denied = verdict { return verdict }
 
         // Aufgelöste Formen (Symlinks); beide müssen erlaubt sein.
-        var resolvedForms: [[String]] = []
-        resolvedForms.append(Self.canonicalPhysical(Self.path(lexical)).map { $0.lowercased() })
-        resolvedForms.append(Self.canonicalPhysical(raw).map { $0.lowercased() })
+        guard let r1 = Self.canonicalPhysical(Self.path(lexical)),
+              let r2 = Self.canonicalPhysical(raw) else { return .denied(Self.reasonUnresolvable) }
+        let resolvedForms = [r1, r2].map { $0.map { $0.lowercased() } }
         for form in resolvedForms where form != lexicalLower {
             if case .denied(let reason) = evaluate(form) {
                 // Credential-/Homebrew-Gründe bleiben aussagekräftig, sonst Symlink-Hinweis.
@@ -82,25 +107,29 @@ public struct SafetyGuard: Sendable {
 
         if let rel = Self.relative(p, to: homeParts) { return evaluateHome(rel) }
 
-        if let rel = Self.relative(p, to: cacheParts) {
+        if let cacheParts, let rel = Self.relative(p, to: cacheParts) {
             if let first = rel.first, allowedCache.contains(first) { return .allowed }
             return .denied(Self.reasonSystem)
         }
 
         for root in Self.absoluteRoots where Self.hasPrefix(p, root) { return .allowed }
 
-        if p.count >= 2, p[0] == "applications", p[1].hasSuffix(".app") { return .allowed }
+        if p.count >= 2, p[0] == "applications", p[1].count > 4, p[1].hasSuffix(".app") { return .allowed }
 
         return .denied(Self.defaultReason(p))
     }
 
     private func evaluateHome(_ rel: [String]) -> SafetyVerdict {
         guard let first = rel.first else { return .denied(Self.reasonHome) }
-        if Self.credentialDirs.contains(first) { return .denied(Self.reasonCreds) }
-        if first == ".docker", rel.count >= 2, rel[1] == "config.json" { return .denied(Self.reasonCreds) }
+        // Geschützte Pfade: gleich, darunter oder Vorfahre davon.
+        for prot in Self.protectedHomePaths {
+            if Self.hasPrefix(rel, prot) || Self.hasPrefix(prot, rel) {
+                let personal = ["documents", "desktop"].contains(prot[0]) || (prot[0] == "library" && rel.count == 1)
+                return .denied(personal ? Self.reasonHome : Self.reasonCreds)
+            }
+        }
+        if rel == ["pictures"] { return .denied(Self.reasonHome) }
         if first == "library", rel.count == 1 { return .denied(Self.reasonHome) }
-        if first == "library", rel.count >= 2, rel[1] == "keychains" { return .denied(Self.reasonCreds) }
-        if first == "documents" || first == "desktop" { return .denied(Self.reasonHome) }
         if rel.contains(where: { $0.hasSuffix(".photoslibrary") }) { return .denied("Fotos-Mediathek wird nie angefasst") }
         if Self.toolDirs.contains(first) {
             if rel.count == 1 { return .denied(Self.reasonCreds) }
@@ -110,7 +139,10 @@ public struct SafetyGuard: Sendable {
     }
 
     private static func matchesCredential(_ name: String) -> Bool {
-        credentialPatterns.contains { fnmatch($0, name, 0) == 0 }
+        // Kombinierende Zeichen entfernen, damit „U+0301 + auth.json“ nicht an den Mustern vorbeirutscht.
+        let marks: Set<Unicode.GeneralCategory> = [.nonspacingMark, .spacingMark, .enclosingMark]
+        let stripped = String(String.UnicodeScalarView(name.unicodeScalars.filter { !marks.contains($0.properties.generalCategory) }))
+        return credentialPatterns.contains { fnmatch($0, name, 0) == 0 || fnmatch($0, stripped, 0) == 0 }
     }
 
     private static func defaultReason(_ p: [String]) -> String {
@@ -127,6 +159,12 @@ public struct SafetyGuard: Sendable {
 
     private static func relative(_ p: [String], to root: [String]) -> [String]? {
         hasPrefix(p, root) ? Array(p.dropFirst(root.count)) : nil
+    }
+
+    /// Trennt auf Unicode-Skalaren (nicht Graphemen): `/` + Combining Mark bleibt ein Trenner, wie im Kernel.
+    private static func split(_ s: String) -> [String] {
+        s.unicodeScalars.split(separator: "/", omittingEmptySubsequences: true)
+            .map { String(String.UnicodeScalarView($0)) }
     }
 
     private static func path(_ parts: [String]) -> String { "/" + parts.joined(separator: "/") }
@@ -149,18 +187,19 @@ public struct SafetyGuard: Sendable {
     }
 
     /// `realpath(3)` auf dem tiefsten existierenden Vorfahren, Rest wird angehängt.
-    private static func canonicalPhysical(_ path: String) -> [String] {
-        var parts = path.split(separator: "/").map(String.init)
+    /// `nil`, wenn die Auflösung aus anderem Grund als „existiert nicht“ scheitert (EACCES, ELOOP …).
+    private static func canonicalPhysical(_ path: String) -> [String]? {
+        var parts = split(path)
         var remainder: [String] = []
         while true {
             let candidate = "/" + parts.joined(separator: "/")
             if let r = realpath(candidate, nil) {
                 let resolved = String(cString: r)
                 free(r)
-                let base = resolved.split(separator: "/").map(String.init)
-                return aliased(normalize(base + remainder))
+                return aliased(normalize(split(resolved) + remainder))
             }
-            guard let last = parts.popLast() else { return aliased(normalize(remainder)) }
+            guard errno == ENOENT || errno == ENOTDIR else { return nil }
+            guard let last = parts.popLast() else { return nil }
             remainder.insert(last, at: 0)
         }
     }

@@ -25,7 +25,6 @@ private let guardUnderTest = SafetyGuard(
         "/Users/test/.kube/config", "/Users/test/.docker/config.json", "/Users/test/Library/Keychains/login.keychain-db",
         "/Applications", "/Applications/notes.txt", "/Applications/TeX/../Utilities",
         "/usr/local/bin", "/usr/local", "/opt", "/tmp/foo", "/etc/hosts", "/var/db/x",
-        "relative/path", "",
         // Traversal / Groß-Kleinschreibung
         "/Users/test/Library/Caches/../../Documents/x", "/Users/test/./Documents",
         "/users/test/documents", "/USERS/TEST/DOCUMENTS/x", "/Users/test/.SSH/id", "/Users/test/.CODEX/Auth.JSON",
@@ -34,6 +33,11 @@ private let guardUnderTest = SafetyGuard(
         "/var/folders/ab/xyz/C/com.apple.Safari", "/private/var/folders/ab/xyz/C/clangx",
         "/Users/test/Library/Developer/Xcode/DerivedData/Caskroom/x",
         "/usr/local/texlive/Cellar", "/Users/tester/Library/x", "/Users/testx/Library/x",
+        // Combining Mark direkt nach dem Trenner
+        "/Users/test/Documents/\u{301}x", "/Users/test/.ssh/\u{301}id_rsa", "/Users/test/.codex/\u{301}auth.json",
+        "/Users/test/Library/Keychains/\u{301}login.keychain-db", "/Users/test/Desktop/\u{301}",
+        // Vorfahren geschützter Pfade, /Applications/.app
+        "/Users/test/.docker", "/Users/test/Pictures", "/Applications/.app", "/Applications/.app/x",
     ])
     func denies(_ path: String) {
         #expect(guardUnderTest.check(URL(filePath: path)) != .allowed, "\(path)")
@@ -104,7 +108,35 @@ private let guardUnderTest = SafetyGuard(
         #expect(g.check(t.root.appending(path: "home/Library/Developer/Caskroom/x")) != .allowed)
     }
 
-    @Test func sidlingPrefixIsNotUnderRoot() {
+    @Test func relativeURLDenied() {
+        #expect(guardUnderTest.check(URL(string: "relative/path")!) != .allowed)
+    }
+
+    @Test func combiningMarkAfterSeparatorOnRealFile() throws {
+        let t = try FixtureTree()
+        try t.file("home/Documents/\u{301}secret.txt", bytes: 3)
+        let g = SafetyGuard(home: t.root.appending(path: "home"), userCacheDir: t.root.appending(path: "C"), allowedCacheSubdirs: [])
+        let u = URL(filePath: t.root.path + "/home/Documents/\u{301}secret.txt")
+        #expect(g.check(u) != .allowed)
+    }
+
+    @Test(arguments: ["/", "/Users", "/private/var", "/private/var/folders", "/private", "/System"])
+    func degenerateHomeFailsClosed(_ home: String) {
+        let g = SafetyGuard(home: URL(filePath: home), userCacheDir: URL(filePath: "/private/var/folders/ab/xyz/C"), allowedCacheSubdirs: ["clang"])
+        for p in ["/System/Library/CoreServices", "/usr/bin", "/Users/other/Library/x", "/Users/test/Library/Caches/x", "/private/var/folders/ab/xyz/C/clang"] {
+            #expect(g.check(URL(filePath: p)) != .allowed, "home \(home) path \(p)")
+        }
+    }
+
+    @Test func invalidCacheDirAllowsNoCacheSubdir() {
+        let g = SafetyGuard(home: URL(filePath: "/Users/test"), userCacheDir: URL(filePath: "/"), allowedCacheSubdirs: ["clang"])
+        #expect(g.check(URL(filePath: "/clang")) != .allowed)
+        #expect(g.check(URL(filePath: "/usr/bin")) != .allowed)
+        let g2 = SafetyGuard(home: URL(filePath: "/Users/test"), userCacheDir: URL(filePath: "/Users/test/Library/Caches"), allowedCacheSubdirs: ["clang"])
+        #expect(g2.check(URL(filePath: "/private/var/folders/ab/xyz/C/clang")) != .allowed)
+    }
+
+    @Test func siblingPrefixIsNotUnderRoot() {
         let g = SafetyGuard(home: URL(filePath: "/Users/test"), userCacheDir: URL(filePath: "/private/var/folders/ab/xyz/C"), allowedCacheSubdirs: ["clang"])
         #expect(g.check(URL(filePath: "/Users/test2/Library/x")) != .allowed)
         #expect(g.check(URL(filePath: "/Library/TeXtra")) != .allowed)
