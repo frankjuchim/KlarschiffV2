@@ -8,6 +8,16 @@ public enum SystemCleanup {
         [TempScanner(), LibraryCachesScanner(), LibraryLogsScanner(), UnifiedLogScanner(), MacUpdateHintScanner()]
     }
 
+    private static let warnings: [String: String] = [
+        "sysdata.temp": "Laufende Programme legen hier Arbeitsdateien ab. Nur Einträge älter als 3 Tage werden entfernt.",
+        "sysdata.libraryCaches": "macOS und Apps bauen diese Caches neu auf. Der erste Start einiger Apps dauert danach länger – ein Neustart wird empfohlen.",
+        "sysdata.libraryLogs": "Alte Protokolle helfen bei der Fehlersuche. Danach sind sie weg.",
+        "sysdata.unifiedLog": "Das komplette Systemprotokoll wird gelöscht. Für die Fehlersuche bei Problemen der letzten Tage fehlt es danach.",
+    ]
+
+    /// Die vollständige Warnzeile (Spec §5) des Aufräum-Scanners; `nil` für reine Hinweise.
+    public static func warning(for scannerID: String) -> String? { warnings[scannerID] }
+
     static let day: TimeInterval = 86_400
 
     static func summary(warning: String, explanation: String) -> String {
@@ -42,7 +52,7 @@ public enum SystemCleanup {
 
 struct TempScanner: Scanner {
     let id = "sysdata.temp"
-    static let warning = "Laufende Programme legen hier Arbeitsdateien ab. Nur Einträge älter als 3 Tage werden entfernt."
+    static var warning: String { SystemCleanup.warning(for: "sysdata.temp") ?? "" }
 
     func scan(_ ctx: ScanContext) async throws -> [Finding] {
         let base = ctx.userTempDir
@@ -98,7 +108,7 @@ struct TempScanner: Scanner {
 struct LibraryCachesScanner: Scanner {
     let id = "sysdata.libraryCaches"
     static let root = "/Library/Caches"
-    static let warning = "macOS und Apps bauen diese Caches neu auf. Der erste Start einiger Apps dauert danach länger – ein Neustart wird empfohlen."
+    static var warning: String { SystemCleanup.warning(for: "sysdata.libraryCaches") ?? "" }
     /// Genau die drei Ausnahmen aus Spec §5 (kleingeschrieben, das Dateisystem ist nicht zwischen Groß-/Kleinschreibung unterscheidend).
     static let excluded: Set<String> = [
         "com.apple.iconservices.store", "com.apple.aned", "com.apple.amsengagementd.classicdatavault",
@@ -142,7 +152,7 @@ struct LibraryCachesScanner: Scanner {
 struct LibraryLogsScanner: Scanner {
     let id = "sysdata.libraryLogs"
     static let root = "/Library/Logs"
-    static let warning = "Alte Protokolle helfen bei der Fehlersuche. Danach sind sie weg."
+    static var warning: String { SystemCleanup.warning(for: "sysdata.libraryLogs") ?? "" }
 
     static let maxItems = 500
     /// Einzige Gruppen, deren Schreibrecht als vertrauenswürdig gilt: wheel, admin, _analyticsusers.
@@ -241,7 +251,7 @@ struct LibraryLogsScanner: Scanner {
 
 struct UnifiedLogScanner: Scanner {
     let id = "sysdata.unifiedLog"
-    static let warning = "Das komplette Systemprotokoll wird gelöscht. Für die Fehlersuche bei Problemen der letzten Tage fehlt es danach."
+    static var warning: String { SystemCleanup.warning(for: "sysdata.unifiedLog") ?? "" }
     static let paths = ["/private/var/db/diagnostics", "/private/var/db/uuidtext"]
 
     func scan(_ ctx: ScanContext) async throws -> [Finding] {

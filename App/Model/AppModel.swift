@@ -321,7 +321,7 @@ final class AppModel {
         isRemoving = true
         removalProgress = "Bereite vor …"
         var labels: [FindingID: (title: String, items: [String: String])] = [:]
-        for (f, _) in plan.toolSteps + plan.trashSteps + plan.deleteSteps + plan.adminSteps {
+        for (f, _) in plan.allSteps {
             labels[f.id] = (f.title, Dictionary(f.items.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first }))
         }
         removalLabels = labels
@@ -337,7 +337,7 @@ final class AppModel {
         removalProgress = nil
         refreshSystemState()
         // Pläne gelten je Tab: Systemfunde → Systemdaten neu messen, sonst normaler Scan.
-        let touchedSystem = (plan.toolSteps + plan.trashSteps + plan.deleteSteps + plan.adminSteps)
+        let touchedSystem = plan.allSteps
             .contains { $0.0.category == .systemData }
         if touchedSystem {
             await measureSystemData()
@@ -347,7 +347,7 @@ final class AppModel {
     }
 
     func emptyTrash() async {
-        guard !isRemoving, !isScanning else { return }
+        guard !isRemoving, !isScanning, !isMeasuringSystemData else { return }
         isRemoving = true
         removalLabels = [:]
         removalProgress = "Papierkorb wird geleert …"

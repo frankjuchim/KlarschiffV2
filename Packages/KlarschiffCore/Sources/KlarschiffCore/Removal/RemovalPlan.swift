@@ -24,6 +24,9 @@ public struct RemovalPlan: Sendable {
     public var directDeleteCandidates: [Finding] = []
     public let options: RemovalOptions
 
+    /// Alle Schritte in Ausführungsreihenfolge: Werkzeug, Papierkorb, Löschen, Admin.
+    public var allSteps: [(Finding, [FindingItem])] { toolSteps + trashSteps + deleteSteps + adminSteps }
+
     public var needsAdmin: Bool { !adminSteps.isEmpty }
 
     public init(findings: [Finding], selection: [FindingID: Set<String>], options: RemovalOptions) {

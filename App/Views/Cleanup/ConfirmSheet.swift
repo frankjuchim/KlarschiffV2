@@ -93,19 +93,19 @@ struct ConfirmSheet: View {
 
     /// Plant der Plan mindestens einen Systemfund, braucht „Aufräumen“ das Häkchen der Warnkarte.
     nonisolated static func requiresSystemAcknowledgement(_ plan: RemovalPlan) -> Bool {
-        (plan.toolSteps + plan.trashSteps + plan.deleteSteps + plan.adminSteps)
+        plan.allSteps
             .contains { $0.0.category == .systemData }
     }
 
-    /// Warnzeilen der geplanten Systemfunde: erster Satz der Zusammenfassung („Achtung: …“).
+    /// Warnzeilen der geplanten Systemfunde: „Achtung: “ + volle Warnzeile (Spec §5), ohne Doppelte, in Planreihenfolge.
     nonisolated static func systemWarningLines(_ plan: RemovalPlan) -> [String] {
-        (plan.toolSteps + plan.trashSteps + plan.deleteSteps + plan.adminSteps)
-            .map(\.0).filter { $0.category == .systemData }.map { firstSentence($0.summary) }
-    }
-
-    nonisolated static func firstSentence(_ text: String) -> String {
-        guard let r = text.range(of: ". ") else { return text }
-        return String(text[..<r.lowerBound]) + "."
+        var out: [String] = []
+        for (f, _) in plan.allSteps where f.category == .systemData {
+            guard let w = SystemCleanup.warning(for: f.id.scannerID) else { continue }
+            let line = "Achtung: " + w
+            if !out.contains(line) { out.append(line) }
+        }
+        return out
     }
 
     // MARK: - Optionen

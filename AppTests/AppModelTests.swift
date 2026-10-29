@@ -638,16 +638,52 @@ private final class Counter: Sendable {
     let plan = RemovalPlan(findings: [sys], selection: [sys.id: ["x"]], options: RemovalOptions())
     #expect(ConfirmSheet.requiresSystemAcknowledgement(plan))
     #expect(!ConfirmSheet.allowsDefaultAction(plan))
+    let trashSys = Finding(
+        id: FindingID(scannerID: "sysdata.x", key: "t"), category: .systemData, title: "t", summary: "", risk: .review,
+        method: .trash, items: [item("a", size: 1)], size: 1, blockingApps: [], keepSuggested: false,
+        commandPreview: [], needsFullDiskAccess: false)
+    let p3 = RemovalPlan(findings: [trashSys], selection: [trashSys.id: ["a"]], options: RemovalOptions())
+    #expect(p3.adminSteps.isEmpty && p3.deleteSteps.isEmpty)
+    #expect(ConfirmSheet.requiresSystemAcknowledgement(p3))
+    #expect(!ConfirmSheet.allowsDefaultAction(p3))
     let other = finding("t", category: .appCaches, risk: .safe, items: [item("a", size: 1)])
     let p2 = RemovalPlan(findings: [other], selection: [other.id: ["a"]], options: RemovalOptions())
     #expect(!ConfirmSheet.requiresSystemAcknowledgement(p2))
 }
 
-@Test func systemWarningLinesAreFirstSentence() {
-    let sys = systemFinding()
-    let plan = RemovalPlan(findings: [sys], selection: [sys.id: ["x"]], options: RemovalOptions())
-    #expect(ConfirmSheet.systemWarningLines(plan) == ["Achtung: Das ist wichtig."])
-    #expect(ConfirmSheet.firstSentence("Ohne Punkt") == "Ohne Punkt")
+@Test func systemWarningLinesAreFullSpecTexts() {
+    let scanners = SystemCleanup.scanners()
+    var findings: [Finding] = []
+    var expected: [String] = []
+    for sc in scanners {
+        guard let w = SystemCleanup.warning(for: sc.id) else { continue }  // Hinweise haben keine Warnzeile
+        let f = Finding(
+            id: FindingID(scannerID: sc.id, key: "all"), category: .systemData, title: sc.id, summary: "Achtung: \(w) Mehr.",
+            risk: .review, method: .delete, items: [item("a", size: 1)], size: 1, blockingApps: [],
+            keepSuggested: false, commandPreview: [], needsFullDiskAccess: false)
+        findings.append(f)
+        expected.append("Achtung: " + w)
+    }
+    #expect(findings.count == 4)
+    let sel = Dictionary(uniqueKeysWithValues: findings.map { ($0.id, Set(["a"])) })
+    let plan = RemovalPlan(findings: findings, selection: sel, options: RemovalOptions())
+    #expect(Set(ConfirmSheet.systemWarningLines(plan)) == Set(expected))
+    #expect(ConfirmSheet.systemWarningLines(plan).count == 4)
+    #expect(ConfirmSheet.systemWarningLines(plan).contains {
+        $0 == "Achtung: Alte Protokolle helfen bei der Fehlersuche. Danach sind sie weg."
+    })
+}
+
+@Test @MainActor func executeAndTrashBlockedWhileMeasuring() async {
+    let model = makeModel([])
+    model.isMeasuringSystemData = true
+    let f = finding("t", category: .appCaches, risk: .safe, items: [item("a", size: 1)])
+    let plan = RemovalPlan(findings: [f], selection: [f.id: ["a"]], options: RemovalOptions())
+    await model.execute(plan)
+    #expect(model.lastRemoval == nil)
+    await model.emptyTrash()
+    #expect(model.lastRemoval == nil)
+    #expect(model.isRemoving == false)
 }
 
 @Test @MainActor func executeSystemPlanRemeasures() async {
