@@ -58,23 +58,25 @@ public struct SystemDataScanner: Sendable {
                 // Home je direktem Unterordner (auch versteckte, keine Symlinks), höchstens 8 gleichzeitig.
                 let children = Measurer.homeChildren(ctx.home)
                 if children.unreadable { lower = true }
-                var next = 0
-                await withTaskGroup(of: (Int64?, Bool, [ScanFailure]).self) { sub in
-                    func add() {
-                        guard next < children.urls.count else { return }
-                        let url = children.urls[next]
-                        next += 1
-                        sub.addTask {
-                            let r = await measure.single(url, id: "userdata.home.\(url.lastPathComponent)")
-                            return (r.size, r.complete, r.failures)
-                        }
+                let top = await measure.measureAll(children.urls, idPrefix: "userdata.home")
+                for r in top {
+                    if let size = r.size {
+                        sum += size
+                        if !r.complete { lower = true }
+                        f += r.failures
+                        continue
                     }
-                    for _ in 0..<min(8, children.urls.count) { add() }
-                    for await (size, complete, fl) in sub {
-                        if let size { sum += size }
-                        if size == nil || !complete { lower = true }
-                        f += fl
-                        add()
+                    // Zeitüberschreitung: eine Ebene tiefer, Verzeichnisse je Kind einzeln messen.
+                    var isDir: ObjCBool = false
+                    guard FileManager.default.fileExists(atPath: r.url.path, isDirectory: &isDir), isDir.boolValue else {
+                        lower = true; f += r.failures; continue
+                    }
+                    let sub = Measurer.homeChildren(r.url)
+                    if sub.unreadable || sub.urls.isEmpty { lower = true; f += r.failures; continue }
+                    for g in await measure.measureAll(sub.urls, idPrefix: "userdata.home.\(r.url.lastPathComponent)") {
+                        if let size = g.size { sum += size }
+                        if g.size == nil || !g.complete { lower = true }
+                        f += g.failures
                     }
                 }
                 return .userData(sum, lower, f)
@@ -213,6 +215,29 @@ private struct Measurer: Sendable {
         let urls = names.sorted().map { home.appending(path: $0) }
             .filter { (try? fm.destinationOfSymbolicLink(atPath: $0.path)) == nil }
         return (urls, false)
+    }
+
+    /// Misst `urls` parallel (höchstens 8 gleichzeitig), je mit eigener Frist; Reihenfolge wie `urls`.
+    func measureAll(_ urls: [URL], idPrefix: String) async -> [(url: URL, size: Int64?, complete: Bool, failures: [ScanFailure])] {
+        var results = [(url: URL, size: Int64?, complete: Bool, failures: [ScanFailure])?](repeating: nil, count: urls.count)
+        await withTaskGroup(of: (Int, Int64?, Bool, [ScanFailure]).self) { group in
+            var next = 0
+            func add() {
+                guard next < urls.count else { return }
+                let i = next
+                next += 1
+                group.addTask {
+                    let r = await self.single(urls[i], id: "\(idPrefix).\(urls[i].lastPathComponent)")
+                    return (i, r.size, r.complete, r.failures)
+                }
+            }
+            for _ in 0..<min(8, urls.count) { add() }
+            for await (i, size, complete, f) in group {
+                results[i] = (urls[i], size, complete, f)
+                add()
+            }
+        }
+        return results.compactMap { $0 }
     }
 
     func single(_ url: URL, id: String) async -> (size: Int64?, complete: Bool, failures: [ScanFailure]) {

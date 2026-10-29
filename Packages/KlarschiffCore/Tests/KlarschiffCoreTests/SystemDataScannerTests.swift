@@ -202,6 +202,25 @@ private func find(_ id: String, in areas: [SystemArea]) -> SystemArea? {
         #expect(r.failures.contains { $0.scannerID == "systemdata.userdata.home.slow" })
     }
 
+    @Test func homeChildTimeoutFallsBackToGrandchildren() async throws {
+        let tree = try FixtureTree()
+        for n in ["home/Library/A", "home/Library/B", "home/Pictures"] { _ = try tree.dir(n) }
+        let sizes: [String: Int64] = ["/home/Library/A": 2 * GB, "/home/Library/B": 1 * GB, "/home/Pictures": 4 * GB]
+        let scanner = SystemDataScanner(areaTimeout: .milliseconds(300), sizeOf: sizer(tree.root, sizes, hang: ["/home/Library"]))
+        var r = await scanner.scan(.test(root: tree.root, runner: diskutilOK())) { _, _ in }
+        #expect(r.userData == 7 * GB)
+        #expect(!r.userDataIsLowerBound)
+        // Ein Enkel hängt zusätzlich: zählt 0, Flag gesetzt, keine tiefere Rekursion.
+        r = await SystemDataScanner(areaTimeout: .milliseconds(300), sizeOf: sizer(tree.root, sizes, hang: ["/home/Library", "/home/Library/B"]))
+            .scan(.test(root: tree.root, runner: diskutilOK())) { _, _ in }
+        #expect(r.userData == 6 * GB)
+        #expect(r.userDataIsLowerBound)
+        // Ein Enkel unvollständig
+        r = await SystemDataScanner(areaTimeout: .milliseconds(300), sizeOf: sizer(tree.root, sizes, incomplete: ["/home/Library/A"], hang: ["/home/Library"]))
+            .scan(.test(root: tree.root, runner: diskutilOK())) { _, _ in }
+        #expect(r.userDataIsLowerBound)
+    }
+
     @Test func homeSymlinkedChildSkipped() async throws {
         let tree = try FixtureTree()
         _ = try tree.dir("home/real")
