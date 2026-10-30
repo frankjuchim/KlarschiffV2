@@ -118,7 +118,8 @@ import Testing
         #expect(own.displayName == "Klarschiff 2 – automatischer Check")
     }
 
-    @Test func permissionErrorIsNotOrphaned() async throws {
+    @Test(.disabled(if: getuid() == 0, "root ignoriert Dateirechte – kein EPERM"))
+    func permissionErrorIsNotOrphaned() async throws {
         let t = try FixtureTree()
         let locked = try t.dir("opt/locked")
         try t.file("opt/locked/tool", bytes: 3)
@@ -139,6 +140,36 @@ import Testing
         #expect(!off.isOrphaned)
         #expect(off.explanation.contains("nicht verbundenen Laufwerk"))
         #expect(item("com.v.on", items)?.isOrphaned == true)
+    }
+
+    @Test func programMissingInsideInstalledAppIsNotOrphaned() async throws {
+        let t = try FixtureTree()
+        try t.file("Applications/Broken.app/Contents/Info.plist", bytes: 3)
+        try plist(t, "home/Library/LaunchAgents/com.b.helper.plist", [
+            "Label": "com.b.helper", "ProgramArguments": ["/Applications/Broken.app/Contents/MacOS/helper"]])
+        let items = await scan(t)
+        let i = try #require(item("com.b.helper", items))
+        #expect(!i.isOrphaned)
+        #expect(i.explanation == "Das Programm fehlt in der installierten App. Nicht entfernbar – bitte die App neu installieren.")
+        #expect(!ServiceRemoval.isRemovable(i, home: t.root.appending(path: "home")))
+    }
+
+    @Test func noKnownAppIsAFlag() async throws {
+        let t = try FixtureTree()
+        try t.file("opt/tool/bin", bytes: 3)
+        try plist(t, "home/Library/LaunchAgents/com.x.plain.plist", ["Label": "com.x.plain", "Program": "/opt/tool/bin"])
+        let items = await scan(t)
+        #expect(item("com.x.plain", items)?.hasNoKnownApp == true)
+    }
+
+    @Test func scannerMarksSharedLabels() async throws {
+        let t = try FixtureTree()
+        try t.file("opt/tool/bin", bytes: 3)
+        try plist(t, "home/Library/LaunchAgents/com.s.dup.plist", ["Label": "com.s.dup", "Program": "/opt/gone/bin"])
+        try plist(t, "Library/LaunchAgents/com.s.dup.plist", ["Label": "com.s.dup", "Program": "/opt/tool/bin"])
+        let items = await scan(t)
+        let orphan = try #require(items.first { $0.scope == .user && $0.label == "com.s.dup" })
+        #expect(orphan.isOrphaned && orphan.sharesLabelWithKeptService)
     }
 
     @Test func renamedAppWithInstalledBundleIDIsNotOrphaned() async throws {

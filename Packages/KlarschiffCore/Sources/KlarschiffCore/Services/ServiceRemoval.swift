@@ -10,9 +10,62 @@ public enum ServiceRemoval {
 
     private static let notFoundMarkers = ["Could not find service", "No such process"]
 
+    public static let sharedLabelReason = "Ein gleichnamiger, intakter Dienst läuft – bitte über die zugehörige App entfernen."
+    /// Markierung bedingter Admin-Schritte in der Befehlsvorschau (als Shell-Kommentar, damit die Zeile kopierbar bleibt).
+    public static let conditionalNote = "  # nur wenn der Dienst gestoppt wurde"
+
     /// Darf dieser Dienst entfernt werden? (Fail-closed: jede Unklarheit → nein.)
     /// `home`: Home-Ordner des Scanners (`ScanContext.home`); Benutzer-plists müssen direkt in `<home>/Library/LaunchAgents` liegen.
     public static func isRemovable(_ item: LaunchItem, home: URL = URL(filePath: NSHomeDirectory())) -> Bool {
+        !item.sharesLabelWithKeptService && isRemovableIgnoringSharedLabels(item, home: home)
+    }
+
+    /// launchd-Domäne, in der `launchctl` den Dienst anspricht: Benutzer und Alle Benutzer teilen `gui/<uid>`.
+    private static func domain(_ scope: LaunchScope) -> String? {
+        switch scope {
+        case .user, .allUsers: "gui"
+        case .system: "system"
+        case .loginItem: nil
+        }
+    }
+
+    /// Setzt `sharesLabelWithKeptService` für entfernbare Einträge, deren Label (ohne Groß-/Kleinschreibung) ein nicht
+    /// entfernbarer Eintrag derselben Domäne trägt. Setzt nur, hebt nie auf.
+    public static func markSharedLabels(_ items: [LaunchItem], home: URL) -> [LaunchItem] {
+        let kept = Set(items.compactMap { item -> String? in
+            guard !isRemovableIgnoringSharedLabels(item, home: home), let d = domain(item.scope) else { return nil }
+            return d + "/" + item.label.lowercased()
+        })
+        return items.map { item in
+            var copy = item
+            if let d = domain(item.scope), kept.contains(d + "/" + item.label.lowercased()),
+               isRemovableIgnoringSharedLabels(item, home: home) {
+                copy.sharesLabelWithKeptService = true
+            }
+            return copy
+        }
+    }
+
+    /// Grund, warum ein (verwaister) Dienst nicht entfernbar ist; `nil` = entfernbar.
+    public static func notRemovableReason(_ item: LaunchItem, home: URL) -> String? {
+        if isRemovable(item, home: home) { return nil }
+        if item.sharesLabelWithKeptService, isRemovableIgnoringSharedLabels(item, home: home) { return sharedLabelReason }
+        if item.isOwnAgent || item.label.lowercased().hasPrefix(LaunchItemScanner.ownPrefix) {
+            return "Gehört zu Klarschiff 2 und bleibt erhalten."
+        }
+        if item.scope == .loginItem { return "Anmeldeobjekte schaltest du in den Systemeinstellungen aus." }
+        if !item.isOrphaned { return "Der Dienst ist nicht verwaist." }
+        let lower = item.label.lowercased()
+        if lower.hasPrefix("com.apple.") || AdminRemover.appleServicePrefixes.contains(where: { lower.hasPrefix($0) }) {
+            return "Gehört zu macOS."
+        }
+        if !AdminRemover.isRemovableServiceLabel(item.label) {
+            return "Ungewöhnlicher Name – Klarschiff 2 fasst diesen Dienst nicht an."
+        }
+        return "Die Startdatei liegt nicht am erwarteten Ort."
+    }
+
+    private static func isRemovableIgnoringSharedLabels(_ item: LaunchItem, home: URL) -> Bool {
         guard item.isOrphaned, !item.isOwnAgent, item.scope != .loginItem,
               !item.label.lowercased().hasPrefix("com.apple."),
               !item.label.lowercased().hasPrefix(LaunchItemScanner.ownPrefix),
@@ -45,7 +98,7 @@ public enum ServiceRemoval {
     public static func finding(
         _ items: [LaunchItem], home: URL = URL(filePath: NSHomeDirectory()), uid: uid_t = getuid()
     ) -> [Finding] {
-        let removable = items.filter { isRemovable($0, home: home) }
+        let removable = markSharedLabels(items, home: home).filter { isRemovable($0, home: home) }
         var findings: [Finding] = []
 
         let user = removable.filter { $0.scope == .user }
@@ -56,7 +109,7 @@ public enum ServiceRemoval {
                 summary: "Die zugehörige App wurde gelöscht. Der Dienst wird gestoppt und seine Startdatei in den Papierkorb gelegt.",
                 risk: .review, method: .trash, items: user.map(findingItem), size: nil, blockingApps: [],
                 keepSuggested: false,
-                commandPreview: user.filter(\.isRunning).map { "\(launchctl) bootout gui/\(uid)/\($0.label)" },
+                commandPreview: guiBootoutLines(user, uid: uid),
                 needsFullDiskAccess: false))
         }
 
@@ -73,18 +126,41 @@ public enum ServiceRemoval {
                 steps.append(AdminStep(executable: "/bin/rm", arguments: ["-f", plist], itemID: item.id,
                                        runsIfPreviousSucceeded: isSystem))
             }
-            let userBootouts = admin.filter { $0.scope == .allUsers && $0.isRunning }
-                .map { "\(launchctl) bootout gui/\(uid)/\($0.label)" }
+            // Alle-Benutzer-Agents werden erst nach erfolgreichem Admin-Schritt gestoppt (Abbruch → bleiben geladen).
+            let lateBootouts = guiBootoutLines(admin.filter { $0.scope == .allUsers }, uid: uid)
             findings.append(Finding(
                 id: adminID, category: .services,
                 title: "Verwaiste Hintergrunddienste (Admin)",
                 summary: "Die zugehörige App wurde gelöscht. Der Dienst wird gestoppt und seine Startdatei mit deinem Admin-Passwort gelöscht – nicht über den Papierkorb.",
                 risk: .review, method: .admin(steps), items: admin.map(findingItem), size: nil, blockingApps: [],
                 keepSuggested: false,
-                commandPreview: userBootouts + steps.map { ([$0.executable] + $0.arguments).map(ShellQuote.quote).joined(separator: " ") },
+                commandPreview: steps.map { previewLine($0) } + lateBootouts,
                 needsFullDiskAccess: false))
         }
         return findings
+    }
+
+    /// Gequoteter Admin-Schritt; bedingte Schritte tragen `conditionalNote`.
+    static func previewLine(_ step: AdminStep) -> String {
+        ([step.executable] + step.arguments).map(ShellQuote.quote).joined(separator: " ")
+            + (step.runsIfPreviousSucceeded ? conditionalNote : "")
+    }
+
+    private static func guiBootoutLines(_ items: [LaunchItem], uid: uid_t) -> [String] {
+        items.map { "\(launchctl) bootout gui/\(uid)/\($0.label)" }
+    }
+
+    /// Kopierbare Befehle in Ausführungsreihenfolge: `bootout gui/…` der Benutzer-Agents, Papierkorb, Admin-Schritte
+    /// (mit `sudo`), danach `bootout gui/…` der Alle-Benutzer-Agents.
+    public static func commandPreview(
+        _ items: [LaunchItem], home: URL = URL(filePath: NSHomeDirectory()), uid: uid_t = getuid()
+    ) -> [String] {
+        let removable = markSharedLabels(items, home: home).filter { isRemovable($0, home: home) }
+        let findings = finding(removable, home: home, uid: uid)
+        let selection = Dictionary(findings.map { ($0.id, Set($0.items.map(\.id))) }, uniquingKeysWith: { a, b in a.union(b) })
+        let plan = RemovalPlan(findings: findings, selection: selection, options: RemovalOptions())
+        return guiBootoutLines(removable.filter { $0.scope == .user }, uid: uid) + plan.commandPreview
+            + guiBootoutLines(removable.filter { $0.scope == .allUsers }, uid: uid)
     }
 
     private static func findingItem(_ item: LaunchItem) -> FindingItem {
@@ -92,14 +168,16 @@ public enum ServiceRemoval {
                     detail: "\(item.scope.title) · \(item.label) – \(item.explanation)")
     }
 
-    /// `launchctl bootout gui/<uid>/<label>` für laufende, entfernbare Benutzer-/Alle-Benutzer-Agents.
-    /// „nicht gefunden“ zählt als erledigt; Trockenlauf → keine Aufrufe.
+    /// `launchctl bootout gui/<uid>/<label>` für jeden entfernbaren Benutzer-/Alle-Benutzer-Agent – auch wenn er gerade
+    /// nicht läuft (er kann trotzdem geladen sein). „nicht gefunden“ zählt als erledigt; Trockenlauf → keine Aufrufe.
+    /// Gleichnamige intakte Dienste derselben Domäne sperren den bootout (`markSharedLabels`).
     public static func bootout(
         _ items: [LaunchItem], runner: CommandRunner, home: URL = URL(filePath: NSHomeDirectory()),
         uid: uid_t = getuid(), dryRun: Bool
     ) async -> [ItemResult] {
         var results: [ItemResult] = []
-        for item in items where isRemovable(item, home: home) && item.isRunning && (item.scope == .user || item.scope == .allUsers) {
+        for item in markSharedLabels(items, home: home)
+        where isRemovable(item, home: home) && (item.scope == .user || item.scope == .allUsers) {
             let fid = item.scope == .user ? trashID : adminID
             func result(_ o: ItemOutcome) -> ItemResult { ItemResult(findingID: fid, itemID: item.id, outcome: o) }
             if dryRun { results.append(result(.skipped(RemovalText.dryRun))); continue }

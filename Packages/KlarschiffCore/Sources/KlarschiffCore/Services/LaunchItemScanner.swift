@@ -35,6 +35,7 @@ public struct LaunchItemScanner: Sendable {
         }
         let running = await runningLabels(items, runner: ctx.runner, uid: uid)
         for i in items.indices { items[i].isRunning = running.contains(items[i].id) }
+        items = ServiceRemoval.markSharedLabels(items, home: ctx.home)
         return items.sorted { a, b in
             if a.scope != b.scope { return a.scope.sortIndex < b.scope.sortIndex }
             let c = a.displayName.localizedStandardCompare(b.displayName)
@@ -75,7 +76,6 @@ public struct LaunchItemScanner: Sendable {
     static func isApple(_ label: String) -> Bool { label.lowercased().hasPrefix("com.apple.") }
 
     private func makeItem(plist: [String: Any], label: String, scope: LaunchScope, url: URL, ctx: ScanContext) -> LaunchItem {
-        let fm = FileManager.default
         let args = plist["ProgramArguments"] as? [String]
         let program = (plist["Program"] as? String) ?? args?.first
         let hasBundleProgram = plist["BundleProgram"] != nil
@@ -89,6 +89,7 @@ public struct LaunchItemScanner: Sendable {
         var missingProgram: String?
         var programInApp = false
         var appMovedButInstalled = false
+        var programMissingInApp = false
         var offlineVolume = false
         var appGone = false
 
@@ -109,6 +110,11 @@ public struct LaunchItemScanner: Sendable {
                    programPresence == .missing || appPresence == .missing {
                     orphaned = true
                     missingProgram = program
+                }
+                // App ist da, nur das Programm darin fehlt: beschädigte Installation, nicht verwaist.
+                if programInApp, appPresence == .present, programPresence == .missing {
+                    orphaned = false
+                    programMissingInApp = true
                 }
             }
         }
@@ -143,6 +149,8 @@ public struct LaunchItemScanner: Sendable {
         } else if orphaned, let missingProgram {
             explanation = "Das Programm fehlt: \(missingProgram). "
                 + (programInApp ? "Die App wurde vermutlich gelöscht." : "Es wurde vermutlich deinstalliert.")
+        } else if programMissingInApp {
+            explanation = "Das Programm fehlt in der installierten App. Nicht entfernbar – bitte die App neu installieren."
         } else if orphaned, appGone {
             explanation = "Die zugehörige App ist nicht mehr installiert. Die App wurde vermutlich gelöscht."
         } else if appMovedButInstalled {
@@ -158,7 +166,9 @@ public struct LaunchItemScanner: Sendable {
         return LaunchItem(
             id: "\(scope.rawValue)/\(label)", label: label, scope: scope, plistURL: url, programPath: program,
             associatedBundleIDs: bundleIDs, appURL: appURL, startKind: startKind, isRunning: false,
-            isOrphaned: orphaned, isOwnAgent: isOwn, displayName: name, explanation: explanation)
+            isOrphaned: orphaned, isOwnAgent: isOwn, displayName: name, explanation: explanation,
+            hasNoKnownApp: !isOwn && appURL == nil && !orphaned && !appMovedButInstalled && !offlineVolume
+                && !programMissingInApp)
     }
 
     enum Presence { case present, missing, unknown }

@@ -361,6 +361,11 @@ private func item(_ id: String, _ url: URL?, size: Int64? = 10) -> FindingItem {
         ["-f", "/Library//LaunchDaemons/x.plist"], ["-f", "/System/Library/LaunchDaemons/x.plist"],
         ["-f", "/Library/LaunchAgents/x.plist", "/usr/local/texlive/2022"],
         ["-rf", "/usr/local/texlive/2022", "/Library/LaunchAgents/x.plist"],
+        // Dateiname (ohne .plist) muss ein entfernbares Dienst-Label sein.
+        ["-f", "/Library/LaunchDaemons/com.apple.foo.plist"], ["-f", "/Library/LaunchAgents/COM.APPLE.x.plist"],
+        ["-f", "/Library/LaunchAgents/x y.plist"], ["-f", "/Library/LaunchAgents/-x.plist"],
+        ["-f", "/Library/LaunchDaemons/de.frankjuchim.klarschiff2.check.plist"],
+        ["-f", "/Library/LaunchDaemons/org.cups.cupsd.plist"], ["-f", "/Library/LaunchAgents/com.exämple.plist"],
     ])
     func adminDeniesOtherRmOnLaunchFolders(_ args: [String]) async throws {
         let tree = try FixtureTree()

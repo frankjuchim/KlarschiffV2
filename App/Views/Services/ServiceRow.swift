@@ -16,7 +16,8 @@ struct ServiceRow: View {
 
     var body: some View {
         let selectable = orphaned && model.isServiceSelectable(item)
-        let commands = orphaned ? ServiceCommandPreview.lines(model.serviceFindings(for: [item.id])) : []
+        let commands = orphaned ? model.serviceCommandLines(for: [item.id]) : []
+        let blockReason = orphaned && !selectable ? model.serviceNotRemovableReason(item) : nil
         HStack(alignment: .top, spacing: 14) {
             if orphaned {
                 SelectionCircle(state: model.selectedServices.contains(item.id) ? .on : .off) {
@@ -36,6 +37,12 @@ struct ServiceRow: View {
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
+                if let blockReason {
+                    Label(Self.notRemovableText(blockReason), systemImage: "lock.fill")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 HStack(spacing: 10) {
                     Text("\(item.label) · \(Self.startText(item))")
                         .font(.system(.callout, design: .monospaced))
@@ -93,7 +100,7 @@ struct ServiceRow: View {
         if item.isOwnAgent { return item.explanation }
         if item.appURL != nil { return "App ist installiert." }
         if item.scope == .loginItem { return item.explanation }
-        if item.explanation == "Gehört zu keiner erkennbaren App." { return "Gehört zu keiner App" }
+        if item.hasNoKnownApp { return "Gehört zu keiner App" }
         return item.explanation
     }
 
@@ -101,6 +108,11 @@ struct ServiceRow: View {
     nonisolated static func missingText(_ item: LaunchItem) -> String {
         if let path = item.programPath, !path.isEmpty { return "Programm fehlt: \(path)" }
         return item.explanation
+    }
+
+    /// Ausgegraute verwaiste Zeile: „nicht entfernbar – <Grund>“.
+    nonisolated static func notRemovableText(_ reason: String) -> String {
+        "nicht entfernbar – \(reason)"
     }
 
     /// Startart; ausgeschaltete Anmeldeobjekte „ausgeschaltet“.
@@ -128,16 +140,5 @@ struct ScopePill: View {
         case .user, .loginItem: Color(hex: 0x1BA89C)
         case .allUsers, .system: Theme.violet
         }
-    }
-}
-
-/// Kopierbare Befehle für Hintergrunddienste in Ausführungsreihenfolge: `launchctl bootout gui/…` (ohne Admin),
-/// dann Papierkorb, dann Admin-Schritte (mit `sudo`).
-enum ServiceCommandPreview {
-    static func lines(_ findings: [Finding]) -> [String] {
-        let selection = Dictionary(findings.map { ($0.id, Set($0.items.map(\.id))) }, uniquingKeysWith: { a, b in a.union(b) })
-        let plan = RemovalPlan(findings: findings, selection: selection, options: RemovalOptions())
-        let bootouts = findings.flatMap(\.commandPreview).filter { $0.contains(" bootout gui/") }
-        return bootouts + plan.commandPreview
     }
 }

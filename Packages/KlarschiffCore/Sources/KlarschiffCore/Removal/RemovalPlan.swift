@@ -91,7 +91,7 @@ public struct RemovalPlan: Sendable {
         for (f, items) in adminSteps {
             guard case .admin(let steps) = f.method else { continue }
             guard let mine = AdminStep.selectedSteps(steps, items: f.items, selected: items) else { continue }
-            out += mine.map { "sudo " + ([$0.executable] + $0.arguments).map(ShellQuote.quote).joined(separator: " ") }
+            out += mine.map { "sudo " + ServiceRemoval.previewLine($0) }
         }
         return out
     }

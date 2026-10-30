@@ -9,7 +9,7 @@ struct LegacyAutomationCard: View {
     @State private var confirm = false
 
     static let title = "Alte Aufräum-Automatik gefunden"
-    static let extrasToggle = "Skript, Protokolle und die leere alte App ebenfalls in den Papierkorb legen"
+    nonisolated static let extrasToggle = "Skript, Protokolle und die leere alte App ebenfalls in den Papierkorb legen"
 
     /// Häkchen-Text: „die leere alte App“ nur, wenn es sie gibt.
     nonisolated static func extrasToggleText(_ items: [LegacyItem]) -> String {

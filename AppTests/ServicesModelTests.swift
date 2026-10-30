@@ -39,9 +39,10 @@ private struct LoggingTrash: Remover {
 
 private struct LoggingExecutor: PrivilegedExecutor {
     let log: ServiceLog
+    var cancel = false
     func run(_ steps: [AdminStep]) async -> AdminRunResult {
         log.add("admin " + steps.map { ([$0.executable] + $0.arguments).joined(separator: " ") }.joined(separator: " ; "))
-        return .completed(steps.map { _ in 0 })
+        return cancel ? .cancelled : .completed(steps.map { _ in 0 })
     }
 }
 
@@ -68,14 +69,23 @@ private struct NoAgents: AgentService {
 }
 
 /// Liefert die aktuelle Dienstliste und zählt die Aufrufe; die Liste lässt sich zwischen Aufrufen ändern.
+/// `calls`: volles Einlesen (mit `sfltool`), `agentCalls`: nur LaunchAgents/-Daemons.
 private final class ServiceSource: Sendable {
-    private let state: Mutex<(items: [LaunchItem], failed: Bool, calls: Int)>
-    init(_ items: [LaunchItem], failed: Bool = false) { state = Mutex((items, failed, 0)) }
+    private let state: Mutex<(items: [LaunchItem], failed: Bool, calls: Int, agentCalls: Int)>
+    init(_ items: [LaunchItem], failed: Bool = false) { state = Mutex((items, failed, 0, 0)) }
     var calls: Int { state.withLock { $0.calls } }
+    var agentCalls: Int { state.withLock { $0.agentCalls } }
+    func set(_ items: [LaunchItem], failed: Bool) { state.withLock { $0.items = items; $0.failed = failed } }
     func load() -> ServicesLoad {
         state.withLock {
             $0.calls += 1
             return ServicesLoad(items: $0.items, loginItemsFailed: $0.failed)
+        }
+    }
+    func loadAgents() -> [LaunchItem] {
+        state.withLock {
+            $0.agentCalls += 1
+            return $0.items.filter { $0.scope != .loginItem }
         }
     }
 }
@@ -119,13 +129,13 @@ private func fixtureItems(_ home: URL) -> [LaunchItem] {
 @MainActor
 private func makeModel(
     home: URL, source: ServiceSource, log: ServiceLog = ServiceLog(), dryRun: Bool = false,
-    failingBootouts: Set<String> = [], orphanedServices: @escaping CheckRunner.OrphanedServices = { _ in [] }
+    failingBootouts: Set<String> = [], cancelAdmin: Bool = false, orphanedServices: @escaping CheckRunner.OrphanedServices = { _ in [] }
 ) -> AppModel {
     let disk: @Sendable () throws -> DiskSpace = { DiskSpace(free: 100, total: 1_000) }
     let guardForTests = SafetyGuard(home: home, userCacheDir: home.appending(path: "Caches"), allowedCacheSubdirs: [])
     let runner = RemovalRunner(
         trash: LoggingTrash(log: log), delete: NoRemover(), tool: NoRemover(),
-        admin: AdminRemover(executor: LoggingExecutor(log: log), guard: guardForTests),
+        admin: AdminRemover(executor: LoggingExecutor(log: log, cancel: cancelAdmin), guard: guardForTests),
         runningApps: NoRunningApps(), diskSpace: disk)
     let commands = ServiceCommands(log: log, failing: failingBootouts)
     let deps = AppDependencies(
@@ -156,6 +166,7 @@ private func makeModel(
         notifier: SilentNotifier(),
         agentService: NoAgents(),
         loadServices: { _ in source.load() },
+        loadLaunchItems: { _ in source.loadAgents() },
         orphanedServices: orphanedServices)
     return AppModel(dependencies: deps, defaults: tempDefaults())
 }
@@ -239,12 +250,13 @@ private let removableIDs: Set<String> = ["user/com.example.useragent", "allUsers
 
     await model.removeServices(removableIDs)
 
+    // Benutzer-Agent vor dem Papierkorb stoppen, Alle-Benutzer-Agent erst nach dem Admin-Schritt.
     #expect(log.events == [
         "/bin/launchctl bootout gui/\(uid)/com.example.useragent",
-        "/bin/launchctl bootout gui/\(uid)/com.example.allagent",
         "trash dryRun=false user/com.example.useragent",
         "admin /bin/rm -f /Library/LaunchAgents/com.example.allagent.plist ; "
             + "/bin/launchctl bootout system/com.example.daemon ; /bin/rm -f /Library/LaunchDaemons/com.example.daemon.plist",
+        "/bin/launchctl bootout gui/\(uid)/com.example.allagent",
     ])
     let report = try #require(model.lastRemoval)
     #expect(report.failures.isEmpty)
@@ -255,8 +267,9 @@ private let removableIDs: Set<String> = ["user/com.example.useragent", "allUsers
     #expect(ResultBanner.headline(report, legacy: model.lastRemovalWasLegacy, services: model.lastRemovalWasServices,
                                   dryRun: model.lastRemovalWasDryRun) == "Hintergrunddienste entfernt.")
     #expect(model.isRemoving == false)
-    // Vorher frisch eingelesen und danach neu geladen; die Auswahl ist leer.
-    #expect(source.calls == 3)
+    // Vorher frisch eingelesen (nur Agents, kein sfltool) und danach voll neu geladen; die Auswahl ist leer.
+    #expect(source.agentCalls == 1)
+    #expect(source.calls == 2)
     #expect(model.selectedServices.isEmpty)
     // Ergebnis-Banner kennt die Namen.
     let first = try #require(report.results.first)
@@ -309,16 +322,16 @@ private let removableIDs: Set<String> = ["user/com.example.useragent", "allUsers
     let model = makeModel(home: home, source: ServiceSource(fixtureItems(home)))
     await model.reloadServices()
     let uid = getuid()
-    let lines = ServiceCommandPreview.lines(model.serviceFindings(for: removableIDs))
+    let lines = model.serviceCommandLines(for: removableIDs)
     #expect(lines == [
         "/bin/launchctl bootout gui/\(uid)/com.example.useragent",
-        "/bin/launchctl bootout gui/\(uid)/com.example.allagent",
         "In den Papierkorb: " + home.appending(path: "Library/LaunchAgents/com.example.useragent.plist").path,
         "sudo /bin/rm -f /Library/LaunchAgents/com.example.allagent.plist",
         "sudo /bin/launchctl bootout system/com.example.daemon",
-        "sudo /bin/rm -f /Library/LaunchDaemons/com.example.daemon.plist",
+        "sudo /bin/rm -f /Library/LaunchDaemons/com.example.daemon.plist  # nur wenn der Dienst gestoppt wurde",
+        "/bin/launchctl bootout gui/\(uid)/com.example.allagent",
     ])
-    #expect(ServiceCommandPreview.lines(model.serviceFindings(for: ["user/com.example.fine"])).isEmpty)
+    #expect(model.serviceCommandLines(for: ["user/com.example.fine"]).isEmpty)
 }
 
 @Test func servicesSectionsGroupByScope() {
@@ -348,7 +361,7 @@ private let removableIDs: Set<String> = ["user/com.example.useragent", "allUsers
     installed.appURL = URL(filePath: "/Applications/Example.app")
     #expect(ServiceRow.statusText(installed) == "App ist installiert.")
     var none = svc("com.example.none", .user, home: home, orphaned: false)
-    none.explanation = "Gehört zu keiner erkennbaren App."
+    none.hasNoKnownApp = true
     #expect(ServiceRow.statusText(none) == "Gehört zu keiner App")
     var own = svc("de.frankjuchim.klarschiff2.check.weekly", .user, home: home, orphaned: false, own: true)
     own.explanation = "Das ist der automatische Check von Klarschiff 2. Er bleibt immer erhalten."
@@ -365,6 +378,7 @@ private let removableIDs: Set<String> = ["user/com.example.useragent", "allUsers
     login.startKind = .onDemand
     #expect(ServiceRow.startText(login) == "ausgeschaltet")
     #expect(ServiceRow.revealURL(login) == nil)
+    #expect(ServiceRow.notRemovableText("Gehört zu macOS.") == "nicht entfernbar – Gehört zu macOS.")
     #expect(ServiceRow.startText(none) == "startet bei Bedarf")
 }
 
@@ -373,7 +387,13 @@ private let removableIDs: Set<String> = ["user/com.example.useragent", "allUsers
     #expect(ResultBanner.headline(ok, legacy: false, services: true, dryRun: false) == "Hintergrunddienste entfernt.")
     let failed = ItemResult(findingID: FindingID(scannerID: "services.orphaned", key: "user"), itemID: "x", outcome: .failed("nein"))
     let partial = RemovalReport(results: [failed], freedBytes: 0, failures: [failed])
-    #expect(ResultBanner.headline(partial, legacy: false, services: true, dryRun: false) == "Hintergrunddienste nur teilweise entfernt.")
+    #expect(ResultBanner.headline(partial, legacy: false, services: true, dryRun: false) == "Hintergrunddienste nicht entfernt.")
+    let cancelled = ItemResult(findingID: failed.findingID, itemID: "y", outcome: .cancelled)
+    let none = RemovalReport(results: [failed, cancelled], freedBytes: 0, failures: [failed, cancelled])
+    #expect(ResultBanner.headline(none, legacy: false, services: true, dryRun: false) == "Hintergrunddienste nicht entfernt.")
+    let removed = ItemResult(findingID: failed.findingID, itemID: "z", outcome: .removed(freed: nil))
+    let some = RemovalReport(results: [removed, failed], freedBytes: 0, failures: [failed])
+    #expect(ResultBanner.headline(some, legacy: false, services: true, dryRun: false) == "Hintergrunddienste nur teilweise entfernt.")
     #expect(ResultBanner.headline(ok, legacy: false, services: false, dryRun: false) == "\(ByteFormat.string(0)) frei geworden.")
 }
 
@@ -386,10 +406,20 @@ private let removableIDs: Set<String> = ["user/com.example.useragent", "allUsers
 
     await model.removeServices(removableIDs)
 
-    // Weder Papierkorb für den Benutzer-Agent noch `rm` für den Alle-Benutzer-Agent – nur der Daemon.
+    // Kein Papierkorb für den Benutzer-Agent; der Alle-Benutzer-Agent wird erst nach dem Admin-Schritt gestoppt –
+    // scheitert das, wird er als Fehler gemeldet (seine plist ist schon weg, er startet nicht wieder).
     #expect(!log.events.contains { $0.hasPrefix("trash") })
-    #expect(log.events.last == "admin /bin/launchctl bootout system/com.example.daemon ; /bin/rm -f /Library/LaunchDaemons/com.example.daemon.plist")
-    #expect(Set(model.lastRemoval?.failures.compactMap(\.itemID) ?? []) == ["user/com.example.useragent", "allUsers/com.example.allagent"])
+    #expect(log.events.dropFirst() == [
+        "admin /bin/rm -f /Library/LaunchAgents/com.example.allagent.plist ; "
+            + "/bin/launchctl bootout system/com.example.daemon ; /bin/rm -f /Library/LaunchDaemons/com.example.daemon.plist",
+        "/bin/launchctl bootout gui/\(getuid())/com.example.allagent",
+    ])
+    let report = try #require(model.lastRemoval)
+    #expect(Set(report.failures.compactMap(\.itemID)) == ["user/com.example.useragent", "allUsers/com.example.allagent"])
+    // Je Dienst genau ein Ergebnis.
+    #expect(report.results.compactMap(\.itemID).sorted() == removableIDs.sorted())
+    #expect(ResultBanner.headline(report, legacy: false, services: true, dryRun: false)
+        == "Hintergrunddienste nur teilweise entfernt.")
 }
 
 @Test @MainActor func removeServicesIgnoresNonRemovableIDs() async {
@@ -403,6 +433,7 @@ private let removableIDs: Set<String> = ["user/com.example.useragent", "allUsers
 
     #expect(log.events.isEmpty)
     #expect(model.lastRemoval == nil)
+    #expect(model.lastError == AppErrorText.servicesNoLongerOrphaned)
     #expect(model.isRemoving == false)
 }
 
@@ -493,8 +524,9 @@ private let removableIDs: Set<String> = ["user/com.example.useragent", "allUsers
     try plist("com.example.gone", program: "/Applications/Gone.app/Contents/MacOS/gone")
     try plist("com.example.fine", program: "/bin/sh")
     try plist("de.frankjuchim.klarschiff2.check.weekly", program: "/Applications/Gone.app/Contents/MacOS/gone")
+    // Eigene Wurzel, damit /Library/LaunchAgents nicht derselbe Ordner wie ~/Library/LaunchAgents ist.
     let ctx = ScanContext(
-        home: home, userCacheDir: home, rootPrefix: home, runner: ServiceCommands(log: ServiceLog()),
+        home: home, userCacheDir: home, rootPrefix: home.appending(path: "root"), runner: ServiceCommands(log: ServiceLog()),
         tools: ToolLocator(searchPaths: [], fileExists: { _ in false }), sizer: SizeMeter(),
         runningApps: NoRunningApps(), claims: PathClaims(), now: Date(), hasFullDiskAccess: false,
         includeSlowChecks: false)
@@ -506,4 +538,95 @@ private let removableIDs: Set<String> = ["user/com.example.useragent", "allUsers
     let s = CheckSnapshot(date: Date(), cleanableTotal: 0, freeBytes: 10, totalBytes: 100, sizes: [:], titles: [:],
                           alerts: [.lowSpace(free: 10, total: 100), .orphanedServices(labels: ["a", "b"])])
     #expect(CheckHistoryRow(s).alerts == ["2 neue verwaiste Hintergrunddienste", "Nur noch 10 Byte frei"])
+}
+
+// MARK: - Abschlussreview
+
+@Test @MainActor func nothingLeftAfterFreshReadReportsAndKeepsLoginItems() async {
+    let home = tempHome()
+    let log = ServiceLog()
+    let source = ServiceSource(fixtureItems(home))
+    let model = makeModel(home: home, source: source, log: log)
+    await model.reloadServices()
+    // Inzwischen ist die App wieder da: nichts mehr verwaist.
+    source.set(fixtureItems(home).map { var i = $0; i.isOrphaned = false; return i }, failed: false)
+
+    await model.removeServices(removableIDs)
+
+    #expect(log.events.isEmpty)
+    #expect(model.lastError == "Inzwischen nicht mehr verwaist – nichts entfernt.")
+    #expect(model.lastRemoval == nil)
+    #expect(source.calls == 1 && source.agentCalls == 1)
+    // Anmeldeobjekte stammen weiter aus dem letzten vollständigen Einlesen.
+    #expect(model.services.contains { $0.id == "loginItem/com.example.login" })
+    #expect(model.services.filter(model.isServiceSelectable).isEmpty)
+}
+
+@Test @MainActor func reloadAfterRemovalKeepsLoginItemsWhenSfltoolFails() async {
+    let home = tempHome()
+    let source = ServiceSource(fixtureItems(home))
+    let model = makeModel(home: home, source: source)
+    await model.reloadServices()
+    source.set(fixtureItems(home).filter { $0.scope != .loginItem }, failed: true)
+
+    await model.removeServices(["user/com.example.useragent"])
+
+    #expect(model.services.contains { $0.id == "loginItem/com.example.login" })
+    #expect(model.loginItemsFailed == false)
+}
+
+@Test @MainActor func cancelledAdminLeavesAllUsersAgentsLoaded() async throws {
+    let home = tempHome()
+    let log = ServiceLog()
+    let model = makeModel(home: home, source: ServiceSource(fixtureItems(home)), log: log, cancelAdmin: true)
+    await model.reloadServices()
+
+    await model.removeServices(["allUsers/com.example.allagent", "system/com.example.daemon"])
+
+    #expect(log.events == ["admin /bin/rm -f /Library/LaunchAgents/com.example.allagent.plist ; "
+        + "/bin/launchctl bootout system/com.example.daemon ; /bin/rm -f /Library/LaunchDaemons/com.example.daemon.plist"])
+    #expect(!log.events.contains { $0.contains("bootout gui/") })
+    let report = try #require(model.lastRemoval)
+    #expect(report.results.map(\.outcome) == [.cancelled, .cancelled])
+    #expect(ResultBanner.headline(report, legacy: false, services: true, dryRun: false) == "Hintergrunddienste nicht entfernt.")
+}
+
+@Test @MainActor func sharedLabelOrphanNotSelectableAndExplained() async {
+    let home = tempHome()
+    let log = ServiceLog()
+    let items = [
+        svc("com.example.shared", .user, home: home),
+        svc("com.example.shared", .allUsers, home: home, orphaned: false),
+    ]
+    let model = makeModel(home: home, source: ServiceSource(items), log: log)
+    await model.reloadServices()
+
+    let orphan = model.services[0]
+    #expect(!model.isServiceSelectable(orphan))
+    #expect(model.serviceNotRemovableReason(orphan)
+        == "Ein gleichnamiger, intakter Dienst läuft – bitte über die zugehörige App entfernen.")
+    model.toggleService(orphan.id)
+    #expect(model.selectedServices.isEmpty)
+    await model.removeServices([orphan.id])
+    #expect(!log.events.contains { $0.contains("bootout") })
+    #expect(model.serviceCommandLines(for: [orphan.id]).isEmpty)
+}
+
+@Test @MainActor func servicesWarningCardWording() async {
+    let home = tempHome()
+    let model = makeModel(home: home, source: ServiceSource(fixtureItems(home)))
+    await model.reloadServices()
+    model.toggleService("system/com.example.daemon")
+    let texts = ConfirmSheet.warningCardTexts(model.makePlan(tab: .services, options: RemovalOptions()))
+    #expect(texts.title == "Du entfernst Hintergrunddienste")
+    #expect(texts.toggle == "Ich habe verstanden, dass die Hintergrunddienste endgültig entfernt werden.")
+
+    let system = Finding(
+        id: FindingID(scannerID: "system.x", key: "k"), category: .systemData, title: "System", summary: "",
+        risk: .review, method: .admin([AdminStep(executable: "/usr/bin/log", arguments: ["erase", "--all"])]),
+        items: [FindingItem(id: "a", url: nil, name: "a", size: 1)],
+        size: 1, blockingApps: [], keepSuggested: false, commandPreview: [], needsFullDiskAccess: false)
+    let sysPlan = RemovalPlan(findings: [system], selection: [system.id: ["a"]], options: RemovalOptions())
+    #expect(ConfirmSheet.warningCardTexts(sysPlan) == ("Du entfernst Systemdateien",
+                                                        "Ich habe verstanden, dass Systemdateien entfernt werden."))
 }

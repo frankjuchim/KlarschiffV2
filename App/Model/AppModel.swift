@@ -25,6 +25,7 @@ enum AppErrorText {
     static let dryRunPlan = "Trockenlauf aktiv – ein Plan ohne Trockenlauf wurde nicht ausgeführt."
     static let mixedServicesPlan = "Hintergrunddienste werden getrennt von anderen Funden entfernt – es wurde nichts ausgeführt."
     static let checkSchedule = "Konnte den automatischen Check nicht anmelden."
+    static let servicesNoLongerOrphaned = "Inzwischen nicht mehr verwaist – nichts entfernt."
 }
 
 /// Ergebnis des Einlesens der Hintergrunddienste (LaunchAgents/-Daemons und Anmeldeobjekte).
@@ -59,6 +60,8 @@ struct AppDependencies: Sendable {
     var agentService: any AgentService
     /// Liest die Hintergrunddienste (nur lesend); Standard: keine.
     var loadServices: @Sendable (ScanContext) async -> ServicesLoad = { _ in ServicesLoad(items: [], loginItemsFailed: false) }
+    /// Liest nur die LaunchAgents/-Daemons (ohne `sfltool`) – für das frische Einlesen direkt vor dem Entfernen.
+    var loadLaunchItems: @Sendable (ScanContext) async -> [LaunchItem] = { _ in [] }
     /// Für den Check: Labels der entfernbaren verwaisten Hintergrunddienste; Standard: keine.
     var orphanedServices: CheckRunner.OrphanedServices = { _ in [] }
 
@@ -464,12 +467,12 @@ final class AppModel {
     }
 
     private func applyServices(_ result: ServicesLoad, home: URL) {
-        services = result.items
+        services = ServiceRemoval.markSharedLabels(result.items, home: home)
         loginItemsFailed = result.loginItemsFailed
         servicesHome = home
         hasLoadedServices = true
         // Auswahl nur behalten, was weiterhin entfernbar ist.
-        let selectable = Set(result.items.filter(isServiceSelectable).map(\.id))
+        let selectable = Set(services.filter(isServiceSelectable).map(\.id))
         selectedServices.formIntersection(selectable)
     }
 
@@ -477,6 +480,18 @@ final class AppModel {
     func isServiceSelectable(_ item: LaunchItem) -> Bool {
         guard let servicesHome else { return false }
         return ServiceRemoval.isRemovable(item, home: servicesHome)
+    }
+
+    /// Warum ein verwaister Dienst nicht auswählbar ist; `nil` = auswählbar (oder noch nicht eingelesen).
+    func serviceNotRemovableReason(_ item: LaunchItem) -> String? {
+        guard let servicesHome else { return nil }
+        return ServiceRemoval.notRemovableReason(item, home: servicesHome)
+    }
+
+    /// Kopierbare Befehle für die gewählten Dienste in Ausführungsreihenfolge.
+    func serviceCommandLines(for ids: Set<String>) -> [String] {
+        guard let servicesHome else { return [] }
+        return ServiceRemoval.commandPreview(services.filter { ids.contains($0.id) }, home: servicesHome)
     }
 
     func toggleService(_ id: String) {
@@ -490,10 +505,12 @@ final class AppModel {
         return ServiceRemoval.finding(services.filter { ids.contains($0.id) }, home: servicesHome)
     }
 
-    /// Nach Bestätigung: frisch einlesen (nur noch Entfernbares aus `ids`), laufende Agents per `launchctl bootout`
-    /// stoppen, dann den Plan über den bekannten Weg ausführen (Papierkorb bzw. Admin mit einer Passwortabfrage).
-    /// Ein Dienst, dessen bootout fehlschlug, bleibt liegen (seine plist wird nicht entfernt). Trockenlauf: kein
-    /// bootout, kein Admin – nur melden. Ergebnis im Ergebnis-Banner; noch unter der Sperre neu einlesen.
+    /// Nach Bestätigung: nur die LaunchAgents/-Daemons frisch einlesen (Anmeldeobjekte bleiben vom letzten Einlesen),
+    /// nur noch Entfernbares aus `ids` nehmen. Reihenfolge: Benutzer-Agents per `launchctl bootout` stoppen, dann der
+    /// Plan über den bekannten Weg (Papierkorb bzw. Admin mit einer Passwortabfrage), erst danach die Alle-Benutzer-Agents
+    /// stoppen – nur die, deren Admin-Schritt geklappt hat (Abbruch → bleiben geladen, plist bleibt).
+    /// Ein Benutzer-Agent, dessen bootout fehlschlug, bleibt liegen. Trockenlauf: kein bootout, kein Admin – nur melden.
+    /// Ergebnis im Ergebnis-Banner; noch unter der Sperre neu einlesen.
     func removeServices(_ ids: Set<String>, dryRun requestedDryRun: Bool = false) async {
         guard !isRemoving, !isScanning, !isMeasuringSystemData, !isChecking, !isLoadingServices, !ids.isEmpty else { return }
         isRemoving = true
@@ -501,28 +518,29 @@ final class AppModel {
         let runDry = dryRun || requestedDryRun
         let ctx = deps.makeContext(false)
 
-        let fresh = await deps.loadServices(ctx)
-        applyServices(fresh, home: ctx.home)
-        let chosen = fresh.items.filter { ids.contains($0.id) && ServiceRemoval.isRemovable($0, home: ctx.home) }
+        let fresh = await deps.loadLaunchItems(ctx)
+        let previousLoginItems = services.filter { $0.scope == .loginItem }
+        applyServices(ServicesLoad(items: fresh + previousLoginItems, loginItemsFailed: loginItemsFailed), home: ctx.home)
+        let chosen = services.filter { ids.contains($0.id) && ServiceRemoval.isRemovable($0, home: ctx.home) }
         guard !chosen.isEmpty else {
+            lastError = AppErrorText.servicesNoLongerOrphaned
             isRemoving = false
             removalProgress = nil
             return
         }
 
-        let bootouts = await ServiceRemoval.bootout(chosen, runner: ctx.runner, home: ctx.home, dryRun: runDry)
-        let bootoutFailures = bootouts.filter {
-            if case .failed = $0.outcome { return true }
-            return false
-        }
-        let stillRunning = Set(bootoutFailures.compactMap(\.itemID))
+        let userBootouts = await ServiceRemoval.bootout(
+            chosen.filter { $0.scope == .user }, runner: ctx.runner, home: ctx.home, dryRun: runDry)
+        let userFailures = userBootouts.filter(Self.isFailure)
+        let stillRunning = Set(userFailures.compactMap(\.itemID))
         var labels: [FindingID: (title: String, items: [String: String])] = [:]
         for f in ServiceRemoval.finding(chosen, home: ctx.home) {
             labels[f.id] = (f.title, Dictionary(f.items.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first }))
         }
         removalLabels = labels
 
-        let findings = ServiceRemoval.finding(chosen.filter { !stillRunning.contains($0.id) }, home: ctx.home)
+        let toRemove = chosen.filter { !stillRunning.contains($0.id) }
+        let findings = ServiceRemoval.finding(toRemove, home: ctx.home)
         var executed = RemovalReport(results: [], freedBytes: 0, failures: [])
         if !findings.isEmpty {
             let plan = RemovalPlan(findings: findings, selection: Self.selectAll(findings), options: RemovalOptions(dryRun: runDry))
@@ -533,21 +551,46 @@ final class AppModel {
                 }
             }
         }
+
+        // Alle-Benutzer-Agents erst stoppen, wenn ihre plist per Admin wirklich entfernt wurde.
+        let adminRemoved = Set(executed.results.compactMap { r -> String? in
+            if case .removed = r.outcome { return r.itemID }
+            return nil
+        })
+        let lateBootouts = runDry ? [] : await ServiceRemoval.bootout(
+            toRemove.filter { $0.scope == .allUsers && adminRemoved.contains($0.id) },
+            runner: ctx.runner, home: ctx.home, dryRun: runDry)
+        let lateFailures = lateBootouts.filter(Self.isFailure)
+        let lateIDs = Set(lateFailures.compactMap(\.itemID))
+
         // Erfolgreiche bootouts stecken im Ergebnis des Plans (ein Eintrag je Dienst); nur Fehlschläge zusätzlich.
         lastRemoval = RemovalReport(
-            results: bootoutFailures + executed.results, freedBytes: executed.freedBytes,
-            failures: bootoutFailures + executed.failures)
+            results: userFailures + executed.results.filter { !lateIDs.contains($0.itemID ?? "") } + lateFailures,
+            freedBytes: executed.freedBytes,
+            failures: userFailures + executed.failures + lateFailures)
         lastRemovalWasDryRun = runDry
         lastRemovalWasLegacy = false
         lastRemovalWasServices = true
         selectedServices = []
-        // Noch unter der Sperre neu einlesen, damit die Liste nie veraltet stehen bleibt.
+        // Noch unter der Sperre neu einlesen, damit die Liste nie veraltet stehen bleibt. Scheitert `sfltool`,
+        // bleiben die bisherigen Anmeldeobjekte stehen.
         removalProgress = "Hintergrunddienste werden neu geprüft …"
-        applyServices(await deps.loadServices(ctx), home: ctx.home)
+        var reloaded = await deps.loadServices(ctx)
+        if reloaded.loginItemsFailed {
+            let keptLogin = services.filter { $0.scope == .loginItem }
+            reloaded = ServicesLoad(items: reloaded.items.filter { $0.scope != .loginItem } + keptLogin,
+                                    loginItemsFailed: loginItemsFailed)
+        }
+        applyServices(reloaded, home: ctx.home)
         isRemoving = false
         removalProgress = nil
         trashBytes = await deps.trash(ctx)
         refreshSystemState()
+    }
+
+    private static func isFailure(_ r: ItemResult) -> Bool {
+        if case .failed = r.outcome { return true }
+        return false
     }
 
     private static func selectAll(_ findings: [Finding]) -> [FindingID: Set<String>] {
@@ -835,6 +878,7 @@ extension AppDependencies {
             notifier: check.notifier,
             agentService: SMAppAgentService(),
             loadServices: { ctx in await loadServicesLive(ctx) },
+            loadLaunchItems: { ctx in await LaunchItemScanner().scan(ctx) },
             orphanedServices: check.orphanedServices)
     }
 

@@ -73,11 +73,23 @@ struct ResultBanner: View {
         if legacy {
             base = report.failures.isEmpty ? "Alte Automatik entfernt." : "Alte Automatik nur teilweise entfernt."
         } else if services {
-            base = report.failures.isEmpty ? "Hintergrunddienste entfernt." : "Hintergrunddienste nur teilweise entfernt."
+            if report.failures.isEmpty {
+                base = "Hintergrunddienste entfernt."
+            } else if report.results.allSatisfy({ !Self.isRemoved($0.outcome) }) {
+                // Kein einziger Dienst entfernt (alle abgebrochen bzw. fehlgeschlagen).
+                base = "Hintergrunddienste nicht entfernt."
+            } else {
+                base = "Hintergrunddienste nur teilweise entfernt."
+            }
         } else {
             base = "\(ByteFormat.string(report.freedBytes)) frei geworden."
         }
         return dryRun ? base + " (Trockenlauf)" : base
+    }
+
+    private nonisolated static func isRemoved(_ outcome: ItemOutcome) -> Bool {
+        if case .removed = outcome { return true }
+        return false
     }
 
     /// „n Einträge konnten nicht entfernt werden.“ (Einzahl bei genau einem Eintrag).

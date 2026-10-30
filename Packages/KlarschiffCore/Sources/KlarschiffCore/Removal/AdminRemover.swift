@@ -184,6 +184,10 @@ public struct AdminRemover: Sendable {
                 guard args.count == 2, args[0] == "-f", lower.count == 3, SafetyGuard.isPlistName(lower[2]) else {
                     return .denied("Nur rm -f auf eine einzelne Dienst-Datei erlaubt")
                 }
+                // Dateiname ohne `.plist` muss ein entfernbares Dienst-Label sein (kein Apple, kein Klarschiff 2).
+                let name = arg.unicodeScalars.split(separator: "/").last.map { String(String.UnicodeScalarView($0)) } ?? ""
+                let stem = String(String.UnicodeScalarView(name.unicodeScalars.dropLast(".plist".unicodeScalars.count)))
+                guard Self.isRemovableServiceLabel(stem) else { return .denied("Ungültiges Dienst-Label") }
             }
             if case .denied(let r) = safety.check(URL(filePath: arg)) { return .denied(r) }
         }

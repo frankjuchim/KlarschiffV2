@@ -142,7 +142,7 @@ private func ok() -> CommandResult { CommandResult(exitCode: 0, stdout: "", stde
         let plan = RemovalPlan(findings: [admin], selection: [admin.id: ["system/com.example.daemon"]], options: RemovalOptions())
         #expect(plan.commandPreview == [
             "sudo /bin/launchctl bootout system/com.example.daemon",
-            "sudo /bin/rm -f /Library/LaunchDaemons/com.example.daemon.plist",
+            "sudo /bin/rm -f /Library/LaunchDaemons/com.example.daemon.plist  # nur wenn der Dienst gestoppt wurde",
         ])
         let onlyA = RemovalPlan(findings: [admin], selection: [admin.id: ["allUsers/com.example.agent"]], options: RemovalOptions())
         #expect(onlyA.commandPreview == ["sudo /bin/rm -f /Library/LaunchAgents/com.example.agent.plist"])
@@ -150,10 +150,11 @@ private func ok() -> CommandResult { CommandResult(exitCode: 0, stdout: "", stde
 
     // MARK: bootout
 
-    @Test func bootoutOnlyRunningUserAndAllUsersAgents() async {
+    @Test func bootoutAlwaysForRemovableUserAndAllUsersAgents() async {
         let runner = FakeCommandRunner()
         runner.stub(launchctl, ["bootout", "gui/501/com.example.user"], result: ok())
         runner.stub(launchctl, ["bootout", "gui/501/com.example.agent"], result: ok())
+        runner.stub(launchctl, ["bootout", "gui/501/com.example.idle"], result: ok())
         let items = [
             svc("com.example.user", .user, running: true),
             svc("com.example.agent", .allUsers, running: true),
@@ -166,10 +167,12 @@ private func ok() -> CommandResult { CommandResult(exitCode: 0, stdout: "", stde
             svc("bad label", .user, running: true, plist: "/Users/test/Library/LaunchAgents/b.plist"),
         ]
         let r = await ServiceRemoval.bootout(items, runner: runner, home: home, uid: 501, dryRun: false)
-        #expect(runner.calls.map(\.0) == [launchctl, launchctl])
-        #expect(runner.calls.map(\.1) == [["bootout", "gui/501/com.example.user"], ["bootout", "gui/501/com.example.agent"]])
-        #expect(r.map(\.itemID) == ["user/com.example.user", "allUsers/com.example.agent"])
-        #expect(r.map(\.outcome) == [.removed(freed: nil), .removed(freed: nil)])
+        // Auch nicht laufende (aber evtl. geladene) Agents werden gestoppt.
+        #expect(runner.calls.map(\.0) == [launchctl, launchctl, launchctl])
+        #expect(runner.calls.map(\.1) == [["bootout", "gui/501/com.example.user"], ["bootout", "gui/501/com.example.agent"],
+                                          ["bootout", "gui/501/com.example.idle"]])
+        #expect(r.map(\.itemID) == ["user/com.example.user", "allUsers/com.example.agent", "user/com.example.idle"])
+        #expect(r.map(\.outcome) == [.removed(freed: nil), .removed(freed: nil), .removed(freed: nil)])
         let ids = ServiceRemoval.finding(items, home: home, uid: 501).map(\.id)
         #expect(r.allSatisfy { ids.contains($0.findingID) })
     }
@@ -194,5 +197,79 @@ private func ok() -> CommandResult { CommandResult(exitCode: 0, stdout: "", stde
         let r = await ServiceRemoval.bootout([svc("com.example.a", .user, running: true)], runner: runner, home: home, uid: 501, dryRun: true)
         #expect(runner.calls.isEmpty)
         #expect(r.map(\.outcome) == [.skipped("Trockenlauf")])
+    }
+
+    // MARK: Abschlussreview
+
+    @Test func previewStopsEveryRemovableAgentAndMarksConditionalRm() throws {
+        let items = [
+            svc("com.example.user", .user, running: false),
+            svc("com.example.agent", .allUsers, running: false),
+            svc("com.example.daemon", .system),
+        ]
+        let findings = ServiceRemoval.finding(items, home: home, uid: 501)
+        let trash = try #require(findings.first { $0.method == .trash })
+        #expect(trash.commandPreview == ["/bin/launchctl bootout gui/501/com.example.user"])
+        let admin = try #require(findings.first { if case .admin = $0.method { true } else { false } })
+        // Alle-Benutzer-Agents werden erst nach dem Admin-Schritt gestoppt.
+        #expect(admin.commandPreview == [
+            "/bin/rm -f /Library/LaunchAgents/com.example.agent.plist",
+            "/bin/launchctl bootout system/com.example.daemon",
+            "/bin/rm -f /Library/LaunchDaemons/com.example.daemon.plist  # nur wenn der Dienst gestoppt wurde",
+            "/bin/launchctl bootout gui/501/com.example.agent",
+        ])
+        #expect(ServiceRemoval.commandPreview(items, home: home, uid: 501) == [
+            "/bin/launchctl bootout gui/501/com.example.user",
+            "In den Papierkorb: /Users/test/Library/LaunchAgents/com.example.user.plist",
+            "sudo /bin/rm -f /Library/LaunchAgents/com.example.agent.plist",
+            "sudo /bin/launchctl bootout system/com.example.daemon",
+            "sudo /bin/rm -f /Library/LaunchDaemons/com.example.daemon.plist  # nur wenn der Dienst gestoppt wurde",
+            "/bin/launchctl bootout gui/501/com.example.agent",
+        ])
+        #expect(ServiceRemoval.commandPreview([svc("com.example.fine", .user, orphaned: false)], home: home, uid: 501).isEmpty)
+    }
+
+    @Test func sharedLabelWithIntactServiceBlocksRemovalAndBootout() async {
+        // Benutzer und Alle Benutzer teilen gui/<uid>: ein intakter Dienst gleichen Namens schützt den verwaisten.
+        let items = [
+            svc("com.example.shared", .user),
+            svc("com.example.shared", .allUsers, orphaned: false),
+            svc("com.example.sys", .system),
+            svc("com.example.sys", .system, orphaned: false, plist: "/Library/LaunchDaemons/other.plist"),
+            svc("com.example.cross", .user),
+            svc("com.example.cross", .system, orphaned: false),
+            svc("com.example.free", .allUsers),
+        ]
+        let marked = ServiceRemoval.markSharedLabels(items, home: home)
+        #expect(marked.map(\.sharesLabelWithKeptService) == [true, false, true, false, false, false, false])
+        #expect(marked.filter { ServiceRemoval.isRemovable($0, home: home) }.map(\.id)
+            == ["user/com.example.cross", "allUsers/com.example.free"])
+        #expect(ServiceRemoval.notRemovableReason(marked[0], home: home) == ServiceRemoval.sharedLabelReason)
+        #expect(ServiceRemoval.sharedLabelReason
+            == "Ein gleichnamiger, intakter Dienst läuft – bitte über die zugehörige App entfernen.")
+
+        // finding und bootout erkennen den Konflikt auch ohne vorheriges Markieren.
+        let ids = ServiceRemoval.finding(items, home: home, uid: 501).flatMap(\.items).map(\.id)
+        #expect(ids == ["user/com.example.cross", "allUsers/com.example.free"])
+        let runner = FakeCommandRunner()
+        runner.stub(launchctl, ["bootout", "gui/501/com.example.cross"], result: ok())
+        runner.stub(launchctl, ["bootout", "gui/501/com.example.free"], result: ok())
+        _ = await ServiceRemoval.bootout(items, runner: runner, home: home, uid: 501, dryRun: false)
+        #expect(runner.calls.map(\.1) == [["bootout", "gui/501/com.example.cross"], ["bootout", "gui/501/com.example.free"]])
+        // Bereits markiert: auch als Teilmenge gesperrt.
+        #expect(ServiceRemoval.finding([marked[0]], home: home, uid: 501).isEmpty)
+    }
+
+    @Test func notRemovableReasons() {
+        #expect(ServiceRemoval.notRemovableReason(svc("com.example.ok", .user), home: home) == nil)
+        #expect(ServiceRemoval.notRemovableReason(svc("com.apple.x", .system), home: home) == "Gehört zu macOS.")
+        #expect(ServiceRemoval.notRemovableReason(svc("org.cups.cupsd", .system), home: home) == "Gehört zu macOS.")
+        #expect(ServiceRemoval.notRemovableReason(
+            svc("com.example.login", .loginItem, plist: "/Users/test/Library/LaunchAgents/l.plist"), home: home)
+            == "Anmeldeobjekte schaltest du in den Systemeinstellungen aus.")
+        #expect(ServiceRemoval.notRemovableReason(svc("bad label", .user, plist: "/Users/test/Library/LaunchAgents/b.plist"),
+                                                  home: home)?.isEmpty == false)
+        #expect(ServiceRemoval.notRemovableReason(svc("com.example.x", .user, plist: "/Users/test/Documents/x.plist"),
+                                                  home: home) == "Die Startdatei liegt nicht am erwarteten Ort.")
     }
 }

@@ -469,7 +469,7 @@ func launchAgentPlistsMatchSpec(name: String, calendar: [String: Int]) throws {
 
 @Test func notificationUserInfoCarriesTab() {
     let n = CheckNotification(title: "Klarschiff 2", body: "x", tab: .systemData)
-    #expect(UserNotificationCenterNotifier.userInfo(for: n)["tab"] as? String == "systemData")
+    #expect(UserNotificationCenterNotifier.userInfo(for: n)["tab"] == "systemData")
 }
 
 // MARK: - Mitteilungs-Erlaubnis

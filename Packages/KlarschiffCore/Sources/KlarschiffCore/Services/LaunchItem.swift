@@ -40,12 +40,17 @@ public struct LaunchItem: Sendable, Identifiable, Equatable {
     public var isOwnAgent: Bool
     public var displayName: String
     public var explanation: String
+    /// Keine zugehörige App erkennbar (für die Statuszeile, statt eines Textvergleichs).
+    public var hasNoKnownApp: Bool
+    /// Ein nicht entfernbarer Dienst derselben launchd-Domäne trägt dasselbe Label (Benutzer und Alle Benutzer teilen
+    /// `gui/<uid>`) – dann wird dieser Eintrag weder gestoppt noch entfernt. Gesetzt von `ServiceRemoval.markSharedLabels`.
+    public var sharesLabelWithKeptService: Bool
 
     public init(
         id: String, label: String, scope: LaunchScope, plistURL: URL? = nil, programPath: String? = nil,
         associatedBundleIDs: [String] = [], appURL: URL? = nil, startKind: StartKind = .onDemand,
         isRunning: Bool = false, isOrphaned: Bool = false, isOwnAgent: Bool = false,
-        displayName: String, explanation: String
+        displayName: String, explanation: String, hasNoKnownApp: Bool = false, sharesLabelWithKeptService: Bool = false
     ) {
         self.id = id
         self.label = label
@@ -60,5 +65,7 @@ public struct LaunchItem: Sendable, Identifiable, Equatable {
         self.isOwnAgent = isOwnAgent
         self.displayName = displayName
         self.explanation = explanation
+        self.hasNoKnownApp = hasNoKnownApp
+        self.sharesLabelWithKeptService = sharesLabelWithKeptService
     }
 }

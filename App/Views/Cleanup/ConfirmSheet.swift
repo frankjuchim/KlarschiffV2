@@ -16,7 +16,8 @@ struct ConfirmSheet: View {
         let groups = Self.groups(for: plan)
         let needsAck = Self.requiresSystemAcknowledgement(plan)
         let isServices = Self.isServicesPlan(plan)
-        let commands = isServices ? ServiceCommandPreview.lines(plan.allSteps.map(\.0)) : plan.commandPreview
+        let commands = isServices
+            ? model.serviceCommandLines(for: Set(plan.allSteps.flatMap { $0.1.map(\.id) })) : plan.commandPreview
         VStack(alignment: .leading, spacing: 16) {
             Text(Self.title(plan))
                 .font(.title2.weight(.bold))
@@ -27,7 +28,9 @@ struct ConfirmSheet: View {
             }
 
             if needsAck {
-                SystemWarningCard(lines: Self.systemWarningLines(plan), acknowledged: $acknowledged)
+                let texts = Self.warningCardTexts(plan)
+                SystemWarningCard(title: texts.title, toggle: texts.toggle, lines: Self.systemWarningLines(plan),
+                                  acknowledged: $acknowledged)
             }
 
             ScrollView {
@@ -109,6 +112,15 @@ struct ConfirmSheet: View {
     /// Überschrift des Dialogs.
     nonisolated static func title(_ plan: RemovalPlan) -> String {
         isServicesPlan(plan) ? "Hintergrunddienste entfernen?" : "\(ByteFormat.string(plan.totalSize)) aufräumen?"
+    }
+
+    /// Titel und Häkchen der roten Karte: Systemfunde wie bisher, sonst (nur Hintergrunddienste) eigene Worte.
+    nonisolated static func warningCardTexts(_ plan: RemovalPlan) -> (title: String, toggle: String) {
+        if plan.allSteps.contains(where: { $0.0.category == .systemData }) {
+            return ("Du entfernst Systemdateien", "Ich habe verstanden, dass Systemdateien entfernt werden.")
+        }
+        return ("Du entfernst Hintergrunddienste",
+                "Ich habe verstanden, dass die Hintergrunddienste endgültig entfernt werden.")
     }
 
     nonisolated static let servicesAdminWarning =
@@ -221,18 +233,20 @@ struct ConfirmSheet: View {
 }
 
 private struct SystemWarningCard: View {
+    let title: String
+    let toggle: String
     let lines: [String]
     @Binding var acknowledged: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("Du entfernst Systemdateien", systemImage: "exclamationmark.triangle.fill")
+            Label(title, systemImage: "exclamationmark.triangle.fill")
                 .font(.headline)
                 .foregroundStyle(.red)
             ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
                 Text(line).font(.callout)
             }
-            Toggle("Ich habe verstanden, dass Systemdateien entfernt werden.", isOn: $acknowledged)
+            Toggle(toggle, isOn: $acknowledged)
                 .toggleStyle(.checkbox)
                 .fontWeight(.semibold)
         }
