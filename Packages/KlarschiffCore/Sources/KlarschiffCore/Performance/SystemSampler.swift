@@ -6,8 +6,10 @@ public struct LiveSystemSampler: SystemSampling {
     public init() {}
 
     public func sample() -> SystemSample? {
-        guard let cpu = Self.cpuTicks(),
-              let used = Self.memoryUsed(),
+        let host = mach_host_self()
+        defer { mach_port_deallocate(mach_task_self_, host) }
+        guard let cpu = Self.cpuTicks(host),
+              let used = Self.memoryUsed(host),
               let pressure = Self.sysctlInt32("kern.memorystatus_vm_pressure_level"),
               let swap = Self.swapUsed(),
               let boot = Self.bootTime() else { return nil }
@@ -17,12 +19,12 @@ public struct LiveSystemSampler: SystemSampling {
             pressureLevel: Int(pressure), swapUsed: swap, bootTime: boot)
     }
 
-    static func cpuTicks() -> CPUTicks? {
+    static func cpuTicks(_ host: mach_port_t) -> CPUTicks? {
         var info = host_cpu_load_info()
         var count = mach_msg_type_number_t(MemoryLayout<host_cpu_load_info>.size / MemoryLayout<integer_t>.size)
         let result = withUnsafeMutablePointer(to: &info) { ptr in
             ptr.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, $0, &count)
+                host_statistics(host, HOST_CPU_LOAD_INFO, $0, &count)
             }
         }
         guard result == KERN_SUCCESS else { return nil }
@@ -31,19 +33,22 @@ public struct LiveSystemSampler: SystemSampling {
         return CPUTicks(user: UInt64(t.0), system: UInt64(t.1), idle: UInt64(t.2), nice: UInt64(t.3))
     }
 
-    static func memoryUsed() -> UInt64? {
+    static func memoryUsed(_ host: mach_port_t) -> UInt64? {
         var stats = vm_statistics64()
         var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64>.size / MemoryLayout<integer_t>.size)
         let result = withUnsafeMutablePointer(to: &stats) { ptr in
             ptr.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
+                host_statistics64(host, HOST_VM_INFO64, $0, &count)
             }
         }
         guard result == KERN_SUCCESS else { return nil }
-        var pageSize: vm_size_t = 0
-        guard host_page_size(mach_host_self(), &pageSize) == KERN_SUCCESS, pageSize > 0 else { return nil }
-        let pages = UInt64(stats.active_count) + UInt64(stats.wire_count) + UInt64(stats.compressor_page_count)
-        return pages * UInt64(pageSize)
+        // vm_kernel_page_size ist unter Swift 6 nicht nebenläufigkeitssicher; gleicher Wert per sysctl.
+        guard let size = sysctlInt32("vm.pagesize"), size > 0 else { return nil }
+        let pageSize = UInt64(size)
+        // Wie die Aktivitätsanzeige: App-Speicher + fest belegt + komprimiert.
+        let appPages = UInt64(stats.internal_page_count) &- min(UInt64(stats.purgeable_count), UInt64(stats.internal_page_count))
+        let pages = appPages + UInt64(stats.wire_count) + UInt64(stats.compressor_page_count)
+        return pages * pageSize
     }
 
     static func sysctlInt32(_ name: String) -> Int32? {

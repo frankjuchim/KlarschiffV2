@@ -8,4 +8,10 @@ public enum ByteFormat {
         // Das Format liefert ein geschütztes Leerzeichen; normales Leerzeichen erleichtert Vergleiche und Kopieren.
         return String(raw.map { $0.isWhitespace ? " " : $0 })
     }
+
+    /// Arbeitsspeicher/Auslagerung in Binäreinheiten wie die Aktivitätsanzeige, z. B. „16 GB“.
+    public static func memoryString(_ bytes: Int64) -> String {
+        let raw = bytes.formatted(.byteCount(style: .memory).locale(Locale(identifier: "de_DE")))
+        return String(raw.map { $0.isWhitespace ? " " : $0 })
+    }
 }

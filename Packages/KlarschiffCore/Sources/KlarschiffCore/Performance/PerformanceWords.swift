@@ -37,7 +37,7 @@ public enum PerformanceWords {
 
     public static func swap(_ bytes: UInt64) -> String {
         if bytes == 0 { return "nichts" }
-        if bytes < 2_000_000_000 { return "wenig" }
+        if bytes < 2_147_483_648 { return "wenig" }
         return "viel"
     }
 

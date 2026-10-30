@@ -14,13 +14,15 @@ struct SystemSamplerTests {
         #expect(PerformanceWords.memory(pressure: 1) == "entspannt")
         #expect(PerformanceWords.memory(pressure: 2) == "angespannt")
         #expect(PerformanceWords.memory(pressure: 4) == "knapp")
+        #expect(PerformanceWords.memory(pressure: 0) == "entspannt")
+        #expect(PerformanceWords.memory(pressure: 3) == "angespannt")
     }
 
     @Test func swapWords() {
         #expect(PerformanceWords.swap(0) == "nichts")
         #expect(PerformanceWords.swap(1) == "wenig")
-        #expect(PerformanceWords.swap(1_999_999_999) == "wenig")
-        #expect(PerformanceWords.swap(2_000_000_000) == "viel")
+        #expect(PerformanceWords.swap(2_147_483_647) == "wenig")
+        #expect(PerformanceWords.swap(2_147_483_648) == "viel")
     }
 
     @Test func uptimeTexts() {
@@ -29,6 +31,9 @@ struct SystemSamplerTests {
             PerformanceWords.uptime(since: now.addingTimeInterval(-s), now: now)
         }
         #expect(up(5 * 3600).value == "5 Stunden")
+        #expect(up(60).value == "1 Minute")
+        #expect(up(30 * 60).value == "30 Minuten")
+        #expect(up(-100).value == "0 Minuten")
         #expect(up(3600).value == "1 Stunde")
         #expect(up(86_400).value == "1 Tag")
         #expect(up(3 * 86_400).value == "3 Tage")
@@ -47,8 +52,8 @@ struct SystemSamplerTests {
         // Überlauf/Rücksetzen: kein Absturz, 0
         #expect(PerformanceMath.cpuLoad(b, a) == 0)
         let wrapped = CPUTicks(user: 10, system: 0, idle: 10, nice: 0)
-        let max = CPUTicks(user: UInt64(UInt32.max) - 5, system: 0, idle: UInt64(UInt32.max) - 5, nice: 0)
-        #expect(abs(PerformanceMath.cpuLoad(max, wrapped) - 0.5) < 1e-9)
+        let nearEnd = CPUTicks(user: UInt64(UInt32.max) - 5, system: 0, idle: UInt64(UInt32.max) - 5, nice: 0)
+        #expect(abs(PerformanceMath.cpuLoad(nearEnd, wrapped) - 0.5) < 1e-9)
     }
 
     @Test func liveSampleIsPlausible() throws {
@@ -59,6 +64,6 @@ struct SystemSamplerTests {
         #expect([1, 2, 4].contains(s.pressureLevel))
         #expect(s.cpu.user + s.cpu.system + s.cpu.idle > 0)
         let s2 = try #require(LiveSystemSampler().sample())
-        #expect(PerformanceMath.cpuLoad(s.cpu, s2.cpu) >= 0)
+        #expect(PerformanceMath.cpuLoad(s.cpu, s2.cpu) <= 1)
     }
 }
