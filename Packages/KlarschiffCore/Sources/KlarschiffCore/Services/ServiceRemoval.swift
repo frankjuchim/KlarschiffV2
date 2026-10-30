@@ -11,8 +11,10 @@ public enum ServiceRemoval {
     private static let notFoundMarkers = ["Could not find service", "No such process"]
 
     public static let sharedLabelReason = "Ein gleichnamiger, intakter Dienst läuft – bitte über die zugehörige App entfernen."
-    /// Markierung bedingter Admin-Schritte in der Befehlsvorschau (als Shell-Kommentar, damit die Zeile kopierbar bleibt).
-    public static let conditionalNote = "  # nur wenn der Dienst gestoppt wurde"
+    /// Hinweiszeile direkt vor bedingten Admin-Schritten in der Befehlsvorschau (ohne „#“, wie „In den Papierkorb: …“).
+    public static let conditionalNote = "Nur wenn der Dienst gestoppt wurde:"
+    public static let foreignJobReason = "Ein gleichnamiger Dienst einer anderen App ist geladen – nicht entfernt."
+    public static let unclearJobReason = "Status des Dienstes unklar – nicht entfernt."
 
     /// Darf dieser Dienst entfernt werden? (Fail-closed: jede Unklarheit → nein.)
     /// `home`: Home-Ordner des Scanners (`ScanContext.home`); Benutzer-plists müssen direkt in `<home>/Library/LaunchAgents` liegen.
@@ -134,17 +136,72 @@ public enum ServiceRemoval {
                 summary: "Die zugehörige App wurde gelöscht. Der Dienst wird gestoppt und seine Startdatei mit deinem Admin-Passwort gelöscht – nicht über den Papierkorb.",
                 risk: .review, method: .admin(steps), items: admin.map(findingItem), size: nil, blockingApps: [],
                 keepSuggested: false,
-                commandPreview: steps.map { previewLine($0) } + lateBootouts,
+                commandPreview: steps.flatMap { previewLines($0, prefix: "") } + lateBootouts,
                 needsFullDiskAccess: false))
         }
         return findings
     }
 
-    /// Gequoteter Admin-Schritt; bedingte Schritte tragen `conditionalNote`.
-    static func previewLine(_ step: AdminStep) -> String {
-        ([step.executable] + step.arguments).map(ShellQuote.quote).joined(separator: " ")
-            + (step.runsIfPreviousSucceeded ? conditionalNote : "")
+    /// Gequoteter Admin-Schritt (mit `prefix`, z. B. „sudo “); bedingten Schritten geht `conditionalNote` als eigene Zeile voraus.
+    static func previewLines(_ step: AdminStep, prefix: String) -> [String] {
+        let line = prefix + ([step.executable] + step.arguments).map(ShellQuote.quote).joined(separator: " ")
+        return step.runsIfPreviousSucceeded ? [conditionalNote, line] : [line]
     }
+
+    // MARK: Eigener Job?
+
+    enum JobCheck: Equatable { case notLoaded, own, foreign, unclear }
+
+    /// `launchctl`-Ziel des Dienstes: `gui/<uid>/<label>` (Benutzer, Alle Benutzer) bzw. `system/<label>`.
+    private static func target(_ item: LaunchItem, uid: uid_t) -> String? {
+        switch item.scope {
+        case .user, .allUsers: "gui/\(uid)/\(item.label)"
+        case .system: "system/\(item.label)"
+        case .loginItem: nil
+        }
+    }
+
+    /// Erste Zeile `path = …` der `launchctl print`-Ausgabe (die Datei, aus der der Job geladen wurde).
+    static func loadedPath(_ printOutput: String) -> String? {
+        for raw in printOutput.split(separator: "\n") {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("path = ") { return String(line.dropFirst("path = ".count)) }
+        }
+        return nil
+    }
+
+    /// Ist der unter dem Label geladene Job wirklich aus der eigenen plist geladen? (`launchctl print`, nur lesend.)
+    /// Nicht geladen → `.notLoaded`; anderer Pfad → `.foreign`; jede Unklarheit → `.unclear`.
+    static func checkJob(_ item: LaunchItem, runner: CommandRunner, uid: uid_t) async -> JobCheck {
+        guard let target = target(item, uid: uid), let plist = item.plistURL?.path else { return .unclear }
+        guard let r = try? await runner.run(launchctl, ["print", target], timeout: .seconds(5)) else { return .unclear }
+        if !r.succeeded {
+            let notFound = r.exitCode == 113 || notFoundMarkers.contains { r.stderr.contains($0) || r.stdout.contains($0) }
+            return notFound ? .notLoaded : .unclear
+        }
+        guard let path = loadedPath(r.stdout) else { return .unclear }
+        return path == plist ? .own : .foreign
+    }
+
+    /// Vor dem Entfernen: entfernbare Dienste, deren Label ein Job aus einer anderen Datei belegt (z. B. SMAppService
+    /// einer installierten App), werden ausgeschlossen – kein bootout, keine plist entfernt. Gilt auch für System-Daemons,
+    /// deren bootout im Admin-Skript läuft. Nicht entfernbare Einträge fallen ebenfalls heraus.
+    public static func verifyOwnJobs(
+        _ items: [LaunchItem], runner: CommandRunner, home: URL = URL(filePath: NSHomeDirectory()), uid: uid_t = getuid()
+    ) async -> (allowed: [LaunchItem], refused: [ItemResult]) {
+        var allowed: [LaunchItem] = []
+        var refused: [ItemResult] = []
+        for item in markSharedLabels(items, home: home) where isRemovable(item, home: home) {
+            switch await checkJob(item, runner: runner, uid: uid) {
+            case .notLoaded, .own: allowed.append(item)
+            case .foreign: refused.append(ItemResult(findingID: findingID(item), itemID: item.id, outcome: .failed(foreignJobReason)))
+            case .unclear: refused.append(ItemResult(findingID: findingID(item), itemID: item.id, outcome: .failed(unclearJobReason)))
+            }
+        }
+        return (allowed, refused)
+    }
+
+    private static func findingID(_ item: LaunchItem) -> FindingID { item.scope == .user ? trashID : adminID }
 
     private static func guiBootoutLines(_ items: [LaunchItem], uid: uid_t) -> [String] {
         items.map { "\(launchctl) bootout gui/\(uid)/\($0.label)" }
@@ -170,7 +227,8 @@ public enum ServiceRemoval {
 
     /// `launchctl bootout gui/<uid>/<label>` für jeden entfernbaren Benutzer-/Alle-Benutzer-Agent – auch wenn er gerade
     /// nicht läuft (er kann trotzdem geladen sein). „nicht gefunden“ zählt als erledigt; Trockenlauf → keine Aufrufe.
-    /// Gleichnamige intakte Dienste derselben Domäne sperren den bootout (`markSharedLabels`).
+    /// Gleichnamige intakte Dienste derselben Domäne sperren den bootout (`markSharedLabels`), ebenso ein unter dem
+    /// Label geladener Job aus einer anderen Datei (`checkJob`).
     public static func bootout(
         _ items: [LaunchItem], runner: CommandRunner, home: URL = URL(filePath: NSHomeDirectory()),
         uid: uid_t = getuid(), dryRun: Bool
@@ -178,9 +236,14 @@ public enum ServiceRemoval {
         var results: [ItemResult] = []
         for item in markSharedLabels(items, home: home)
         where isRemovable(item, home: home) && (item.scope == .user || item.scope == .allUsers) {
-            let fid = item.scope == .user ? trashID : adminID
-            func result(_ o: ItemOutcome) -> ItemResult { ItemResult(findingID: fid, itemID: item.id, outcome: o) }
+            func result(_ o: ItemOutcome) -> ItemResult { ItemResult(findingID: findingID(item), itemID: item.id, outcome: o) }
             if dryRun { results.append(result(.skipped(RemovalText.dryRun))); continue }
+            // Nur den eigenen Job stoppen: unmittelbar vorher prüfen, aus welcher Datei er geladen ist.
+            switch await checkJob(item, runner: runner, uid: uid) {
+            case .foreign: results.append(result(.failed(foreignJobReason))); continue
+            case .unclear: results.append(result(.failed(unclearJobReason))); continue
+            case .notLoaded, .own: break
+            }
             do {
                 let r = try await runner.run(launchctl, ["bootout", "gui/\(uid)/\(item.label)"])
                 if r.succeeded || notFoundMarkers.contains(where: { r.stderr.contains($0) }) {

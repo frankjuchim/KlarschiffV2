@@ -13,11 +13,20 @@ private final class ServiceLog: Sendable {
     func add(_ e: String) { store.withLock { $0.append(e) } }
 }
 
-/// `bootout` → Erfolg (außer für `failing`); alles wird protokolliert.
+/// `bootout` → Erfolg (außer für `failing`); `print` → nicht geladen, für `foreign` geladen aus einem App-Bundle.
+/// Alles außer `print` (nur lesend) wird protokolliert.
 private struct ServiceCommands: CommandRunner {
     let log: ServiceLog
     var failing: Set<String> = []
+    var foreign: Set<String> = []
     func run(_ executable: String, _ arguments: [String], timeout: Duration, environment: [String: String]) async throws -> CommandResult {
+        if arguments.first == "print", let target = arguments.last {
+            if let label = foreign.first(where: { target.hasSuffix("/\($0)") }) {
+                return CommandResult(exitCode: 0, stdout: "\(target) = {\n\tpath = /Applications/X.app/Contents/Library/LaunchAgents/\(label).plist\n}",
+                                     stderr: "")
+            }
+            return CommandResult(exitCode: 113, stdout: "", stderr: "Could not find service")
+        }
         log.add(([executable] + arguments).joined(separator: " "))
         if arguments.first == "bootout", let target = arguments.last,
            failing.contains(where: { target.hasSuffix("/\($0)") }) {
@@ -129,7 +138,7 @@ private func fixtureItems(_ home: URL) -> [LaunchItem] {
 @MainActor
 private func makeModel(
     home: URL, source: ServiceSource, log: ServiceLog = ServiceLog(), dryRun: Bool = false,
-    failingBootouts: Set<String> = [], cancelAdmin: Bool = false, orphanedServices: @escaping CheckRunner.OrphanedServices = { _ in [] }
+    failingBootouts: Set<String> = [], foreignJobs: Set<String> = [], cancelAdmin: Bool = false, orphanedServices: @escaping CheckRunner.OrphanedServices = { _ in [] }
 ) -> AppModel {
     let disk: @Sendable () throws -> DiskSpace = { DiskSpace(free: 100, total: 1_000) }
     let guardForTests = SafetyGuard(home: home, userCacheDir: home.appending(path: "Caches"), allowedCacheSubdirs: [])
@@ -137,7 +146,7 @@ private func makeModel(
         trash: LoggingTrash(log: log), delete: NoRemover(), tool: NoRemover(),
         admin: AdminRemover(executor: LoggingExecutor(log: log, cancel: cancelAdmin), guard: guardForTests),
         runningApps: NoRunningApps(), diskSpace: disk)
-    let commands = ServiceCommands(log: log, failing: failingBootouts)
+    let commands = ServiceCommands(log: log, failing: failingBootouts, foreign: foreignJobs)
     let deps = AppDependencies(
         engine: ScanEngine(scanners: []),
         keepList: KeepList(fileURL: home.appending(path: "keep.json")),
@@ -328,7 +337,8 @@ private let removableIDs: Set<String> = ["user/com.example.useragent", "allUsers
         "In den Papierkorb: " + home.appending(path: "Library/LaunchAgents/com.example.useragent.plist").path,
         "sudo /bin/rm -f /Library/LaunchAgents/com.example.allagent.plist",
         "sudo /bin/launchctl bootout system/com.example.daemon",
-        "sudo /bin/rm -f /Library/LaunchDaemons/com.example.daemon.plist  # nur wenn der Dienst gestoppt wurde",
+        "Nur wenn der Dienst gestoppt wurde:",
+        "sudo /bin/rm -f /Library/LaunchDaemons/com.example.daemon.plist",
         "/bin/launchctl bootout gui/\(uid)/com.example.allagent",
     ])
     #expect(model.serviceCommandLines(for: ["user/com.example.fine"]).isEmpty)
@@ -629,4 +639,26 @@ private let removableIDs: Set<String> = ["user/com.example.useragent", "allUsers
     let sysPlan = RemovalPlan(findings: [system], selection: [system.id: ["a"]], options: RemovalOptions())
     #expect(ConfirmSheet.warningCardTexts(sysPlan) == ("Du entfernst Systemdateien",
                                                         "Ich habe verstanden, dass Systemdateien entfernt werden."))
+}
+
+@Test @MainActor func foreignJobWithSameLabelIsLeftAlone() async throws {
+    let home = tempHome()
+    let log = ServiceLog()
+    let model = makeModel(home: home, source: ServiceSource(fixtureItems(home)), log: log,
+                          foreignJobs: ["com.example.useragent", "com.example.daemon"])
+    await model.reloadServices()
+
+    await model.removeServices(removableIDs)
+
+    // Weder bootout noch Papierkorb für den Benutzer-Agent; der System-Daemon fehlt im Admin-Skript.
+    #expect(log.events == [
+        "admin /bin/rm -f /Library/LaunchAgents/com.example.allagent.plist",
+        "/bin/launchctl bootout gui/\(getuid())/com.example.allagent",
+    ])
+    let report = try #require(model.lastRemoval)
+    let refused = report.failures.filter { $0.outcome == .failed(ServiceRemoval.foreignJobReason) }
+    #expect(Set(refused.compactMap(\.itemID)) == ["user/com.example.useragent", "system/com.example.daemon"])
+    #expect(report.results.compactMap(\.itemID).sorted() == removableIDs.sorted())
+    #expect(ResultBanner.headline(report, legacy: false, services: true, dryRun: false)
+        == "Hintergrunddienste nur teilweise entfernt.")
 }

@@ -25,6 +25,25 @@ private let home = URL(filePath: "/Users/test")
 
 private func ok() -> CommandResult { CommandResult(exitCode: 0, stdout: "", stderr: "") }
 
+/// `launchctl print <target>` → nicht geladen.
+private func notLoaded(_ r: FakeCommandRunner, _ target: String) {
+    r.stub(launchctl, ["print", target], result: CommandResult(exitCode: 113, stdout: "", stderr: "Could not find service \"x\" in domain for port"))
+}
+
+/// `launchctl print <target>` → geladen aus `path` (vorher eine `stdout path`-Zeile, die nicht zählen darf).
+private func loaded(_ r: FakeCommandRunner, _ target: String, path: String) {
+    r.stub(launchctl, ["print", target], result: CommandResult(exitCode: 0, stdout: """
+        \(target) = {
+        \tactive count = 1
+        \tstdout path = /tmp/out.log
+        \tpath = \(path)
+        \tstate = running
+        }
+        """, stderr: ""))
+}
+
+private func bootoutCalls(_ r: FakeCommandRunner) -> [[String]] { r.calls.map(\.1).filter { $0.first == "bootout" } }
+
 @Suite struct ServiceRemovalTests {
     @Test func onlyOrphanedNonAppleNonOwnNonLoginItems() {
         let items = [
@@ -142,7 +161,8 @@ private func ok() -> CommandResult { CommandResult(exitCode: 0, stdout: "", stde
         let plan = RemovalPlan(findings: [admin], selection: [admin.id: ["system/com.example.daemon"]], options: RemovalOptions())
         #expect(plan.commandPreview == [
             "sudo /bin/launchctl bootout system/com.example.daemon",
-            "sudo /bin/rm -f /Library/LaunchDaemons/com.example.daemon.plist  # nur wenn der Dienst gestoppt wurde",
+            "Nur wenn der Dienst gestoppt wurde:",
+            "sudo /bin/rm -f /Library/LaunchDaemons/com.example.daemon.plist",
         ])
         let onlyA = RemovalPlan(findings: [admin], selection: [admin.id: ["allUsers/com.example.agent"]], options: RemovalOptions())
         #expect(onlyA.commandPreview == ["sudo /bin/rm -f /Library/LaunchAgents/com.example.agent.plist"])
@@ -155,6 +175,9 @@ private func ok() -> CommandResult { CommandResult(exitCode: 0, stdout: "", stde
         runner.stub(launchctl, ["bootout", "gui/501/com.example.user"], result: ok())
         runner.stub(launchctl, ["bootout", "gui/501/com.example.agent"], result: ok())
         runner.stub(launchctl, ["bootout", "gui/501/com.example.idle"], result: ok())
+        loaded(runner, "gui/501/com.example.user", path: "/Users/test/Library/LaunchAgents/com.example.user.plist")
+        loaded(runner, "gui/501/com.example.agent", path: "/Library/LaunchAgents/com.example.agent.plist")
+        notLoaded(runner, "gui/501/com.example.idle")
         let items = [
             svc("com.example.user", .user, running: true),
             svc("com.example.agent", .allUsers, running: true),
@@ -168,9 +191,12 @@ private func ok() -> CommandResult { CommandResult(exitCode: 0, stdout: "", stde
         ]
         let r = await ServiceRemoval.bootout(items, runner: runner, home: home, uid: 501, dryRun: false)
         // Auch nicht laufende (aber evtl. geladene) Agents werden gestoppt.
-        #expect(runner.calls.map(\.0) == [launchctl, launchctl, launchctl])
-        #expect(runner.calls.map(\.1) == [["bootout", "gui/501/com.example.user"], ["bootout", "gui/501/com.example.agent"],
-                                          ["bootout", "gui/501/com.example.idle"]])
+        #expect(runner.calls.allSatisfy { $0.0 == launchctl })
+        #expect(runner.calls.map(\.1) == [
+            ["print", "gui/501/com.example.user"], ["bootout", "gui/501/com.example.user"],
+            ["print", "gui/501/com.example.agent"], ["bootout", "gui/501/com.example.agent"],
+            ["print", "gui/501/com.example.idle"], ["bootout", "gui/501/com.example.idle"],
+        ])
         #expect(r.map(\.itemID) == ["user/com.example.user", "allUsers/com.example.agent", "user/com.example.idle"])
         #expect(r.map(\.outcome) == [.removed(freed: nil), .removed(freed: nil), .removed(freed: nil)])
         let ids = ServiceRemoval.finding(items, home: home, uid: 501).map(\.id)
@@ -185,6 +211,7 @@ private func ok() -> CommandResult { CommandResult(exitCode: 0, stdout: "", stde
                     result: CommandResult(exitCode: 3, stdout: "", stderr: "Boot-out failed: 3: No such process"))
         runner.stub(launchctl, ["bootout", "gui/501/com.example.c"],
                     result: CommandResult(exitCode: 5, stdout: "", stderr: "Input/output error"))
+        for x in ["a", "b", "c"] { notLoaded(runner, "gui/501/com.example.\(x)") }
         let items = ["a", "b", "c"].map { svc("com.example.\($0)", .user, running: true) }
         let r = await ServiceRemoval.bootout(items, runner: runner, home: home, uid: 501, dryRun: false)
         #expect(r[0].outcome == .removed(freed: nil))
@@ -215,7 +242,8 @@ private func ok() -> CommandResult { CommandResult(exitCode: 0, stdout: "", stde
         #expect(admin.commandPreview == [
             "/bin/rm -f /Library/LaunchAgents/com.example.agent.plist",
             "/bin/launchctl bootout system/com.example.daemon",
-            "/bin/rm -f /Library/LaunchDaemons/com.example.daemon.plist  # nur wenn der Dienst gestoppt wurde",
+            "Nur wenn der Dienst gestoppt wurde:",
+            "/bin/rm -f /Library/LaunchDaemons/com.example.daemon.plist",
             "/bin/launchctl bootout gui/501/com.example.agent",
         ])
         #expect(ServiceRemoval.commandPreview(items, home: home, uid: 501) == [
@@ -223,7 +251,8 @@ private func ok() -> CommandResult { CommandResult(exitCode: 0, stdout: "", stde
             "In den Papierkorb: /Users/test/Library/LaunchAgents/com.example.user.plist",
             "sudo /bin/rm -f /Library/LaunchAgents/com.example.agent.plist",
             "sudo /bin/launchctl bootout system/com.example.daemon",
-            "sudo /bin/rm -f /Library/LaunchDaemons/com.example.daemon.plist  # nur wenn der Dienst gestoppt wurde",
+            "Nur wenn der Dienst gestoppt wurde:",
+            "sudo /bin/rm -f /Library/LaunchDaemons/com.example.daemon.plist",
             "/bin/launchctl bootout gui/501/com.example.agent",
         ])
         #expect(ServiceRemoval.commandPreview([svc("com.example.fine", .user, orphaned: false)], home: home, uid: 501).isEmpty)
@@ -254,8 +283,10 @@ private func ok() -> CommandResult { CommandResult(exitCode: 0, stdout: "", stde
         let runner = FakeCommandRunner()
         runner.stub(launchctl, ["bootout", "gui/501/com.example.cross"], result: ok())
         runner.stub(launchctl, ["bootout", "gui/501/com.example.free"], result: ok())
+        notLoaded(runner, "gui/501/com.example.cross")
+        notLoaded(runner, "gui/501/com.example.free")
         _ = await ServiceRemoval.bootout(items, runner: runner, home: home, uid: 501, dryRun: false)
-        #expect(runner.calls.map(\.1) == [["bootout", "gui/501/com.example.cross"], ["bootout", "gui/501/com.example.free"]])
+        #expect(bootoutCalls(runner) == [["bootout", "gui/501/com.example.cross"], ["bootout", "gui/501/com.example.free"]])
         // Bereits markiert: auch als Teilmenge gesperrt.
         #expect(ServiceRemoval.finding([marked[0]], home: home, uid: 501).isEmpty)
     }
@@ -271,5 +302,54 @@ private func ok() -> CommandResult { CommandResult(exitCode: 0, stdout: "", stde
                                                   home: home)?.isEmpty == false)
         #expect(ServiceRemoval.notRemovableReason(svc("com.example.x", .user, plist: "/Users/test/Documents/x.plist"),
                                                   home: home) == "Die Startdatei liegt nicht am erwarteten Ort.")
+    }
+
+    // MARK: Nachtrag: Vorschau ohne „#“, nur eigenen Job stoppen
+
+    @Test func previewLinesNeverContainHash() {
+        let items = [
+            svc("com.example.user", .user), svc("com.example.agent", .allUsers), svc("com.example.daemon", .system),
+        ]
+        let findings = ServiceRemoval.finding(items, home: home, uid: 501)
+        let selection = Dictionary(uniqueKeysWithValues: findings.map { ($0.id, Set($0.items.map(\.id))) })
+        let lines = ServiceRemoval.commandPreview(items, home: home, uid: 501)
+            + findings.flatMap(\.commandPreview)
+            + RemovalPlan(findings: findings, selection: selection, options: RemovalOptions()).commandPreview
+        #expect(!lines.isEmpty)
+        #expect(lines.allSatisfy { !$0.contains("#") }, "\(lines)")
+    }
+
+    @Test func foreignJobWithSameLabelIsNeitherStoppedNorRemoved() async {
+        let runner = FakeCommandRunner()
+        loaded(runner, "gui/501/com.example.user",
+               path: "/Applications/X.app/Contents/Library/LaunchAgents/com.example.user.plist")
+        loaded(runner, "system/com.example.daemon",
+               path: "/Applications/X.app/Contents/Library/LaunchDaemons/com.example.daemon.plist")
+        loaded(runner, "gui/501/com.example.agent", path: "/Library/LaunchAgents/com.example.agent.plist")
+        notLoaded(runner, "system/com.example.idle")
+        runner.stub(launchctl, ["print", "gui/501/com.example.weird"], result: ok())  // geladen, aber ohne path → unklar
+        runner.stub(launchctl, ["bootout", "gui/501/com.example.user"], result: ok())
+        let items = [
+            svc("com.example.user", .user), svc("com.example.daemon", .system),
+            svc("com.example.agent", .allUsers), svc("com.example.idle", .system), svc("com.example.weird", .user),
+            svc("com.example.fine", .user, orphaned: false),
+        ]
+
+        let v = await ServiceRemoval.verifyOwnJobs(items, runner: runner, home: home, uid: 501)
+        #expect(v.allowed.map(\.id) == ["allUsers/com.example.agent", "system/com.example.idle"])
+        #expect(v.refused.map(\.itemID) == ["user/com.example.user", "system/com.example.daemon", "user/com.example.weird"])
+        #expect(v.refused.map(\.outcome) == [.failed(ServiceRemoval.foreignJobReason), .failed(ServiceRemoval.foreignJobReason),
+                                             .failed(ServiceRemoval.unclearJobReason)])
+        #expect(ServiceRemoval.foreignJobReason == "Ein gleichnamiger Dienst einer anderen App ist geladen – nicht entfernt.")
+        #expect(v.refused.first?.findingID == ServiceRemoval.finding([items[0]], home: home, uid: 501).first?.id)
+        // Nur lesend: keine bootouts bei der Prüfung; der Fremd-Daemon fehlt in den Admin-Schritten.
+        #expect(bootoutCalls(runner).isEmpty)
+        let admin = ServiceRemoval.finding(v.allowed, home: home, uid: 501).flatMap(\.commandPreview)
+        #expect(!admin.contains { $0.contains("com.example.daemon") })
+
+        // Auch bootout selbst prüft unmittelbar vorher.
+        let r = await ServiceRemoval.bootout([items[0]], runner: runner, home: home, uid: 501, dryRun: false)
+        #expect(r.map(\.outcome) == [.failed(ServiceRemoval.foreignJobReason)])
+        #expect(bootoutCalls(runner).isEmpty)
     }
 }

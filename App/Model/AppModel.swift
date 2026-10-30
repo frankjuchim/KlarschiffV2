@@ -505,6 +505,7 @@ final class AppModel {
         return ServiceRemoval.finding(services.filter { ids.contains($0.id) }, home: servicesHome)
     }
 
+    /// Vor jedem Stoppen prüft `ServiceRemoval.verifyOwnJobs`, dass ein geladener Job aus der eigenen plist stammt.
     /// Nach Bestätigung: nur die LaunchAgents/-Daemons frisch einlesen (Anmeldeobjekte bleiben vom letzten Einlesen),
     /// nur noch Entfernbares aus `ids` nehmen. Reihenfolge: Benutzer-Agents per `launchctl bootout` stoppen, dann der
     /// Plan über den bekannten Weg (Papierkorb bzw. Admin mit einer Passwortabfrage), erst danach die Alle-Benutzer-Agents
@@ -529,8 +530,12 @@ final class AppModel {
             return
         }
 
+        // Nur eigene Jobs: belegt ein Job aus einer anderen Datei das Label, bleibt der Dienst unangetastet
+        // (kein bootout, auch nicht im Admin-Skript, keine plist entfernt). `launchctl print` ist nur lesend.
+        let verified = await ServiceRemoval.verifyOwnJobs(chosen, runner: ctx.runner, home: ctx.home)
+        let refused = verified.refused
         let userBootouts = await ServiceRemoval.bootout(
-            chosen.filter { $0.scope == .user }, runner: ctx.runner, home: ctx.home, dryRun: runDry)
+            verified.allowed.filter { $0.scope == .user }, runner: ctx.runner, home: ctx.home, dryRun: runDry)
         let userFailures = userBootouts.filter(Self.isFailure)
         let stillRunning = Set(userFailures.compactMap(\.itemID))
         var labels: [FindingID: (title: String, items: [String: String])] = [:]
@@ -539,7 +544,7 @@ final class AppModel {
         }
         removalLabels = labels
 
-        let toRemove = chosen.filter { !stillRunning.contains($0.id) }
+        let toRemove = verified.allowed.filter { !stillRunning.contains($0.id) }
         let findings = ServiceRemoval.finding(toRemove, home: ctx.home)
         var executed = RemovalReport(results: [], freedBytes: 0, failures: [])
         if !findings.isEmpty {
@@ -565,9 +570,9 @@ final class AppModel {
 
         // Erfolgreiche bootouts stecken im Ergebnis des Plans (ein Eintrag je Dienst); nur Fehlschläge zusätzlich.
         lastRemoval = RemovalReport(
-            results: userFailures + executed.results.filter { !lateIDs.contains($0.itemID ?? "") } + lateFailures,
+            results: refused + userFailures + executed.results.filter { !lateIDs.contains($0.itemID ?? "") } + lateFailures,
             freedBytes: executed.freedBytes,
-            failures: userFailures + executed.failures + lateFailures)
+            failures: refused + userFailures + executed.failures + lateFailures)
         lastRemovalWasDryRun = runDry
         lastRemovalWasLegacy = false
         lastRemovalWasServices = true
