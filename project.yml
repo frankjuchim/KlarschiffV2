@@ -45,6 +45,8 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: "Klarschiff 2"
         INFOPLIST_KEY_NSAppleEventsUsageDescription: "Klarschiff 2 bittet den Finder, den Papierkorb zu leeren."
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
+        # App-Icon aus App/Assets.xcassets (erzeugt mit scripts/make-icon.swift).
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
   KlarschiffTests:
