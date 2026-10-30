@@ -22,10 +22,17 @@ public struct SlowdownDetector: Sendable {
     private var cpuSince: [String: Date] = [:]
     private var pressureSince: Date?
     private var swapSamples: [(date: Date, used: UInt64)] = []
+    private var lastUpdate: Date?
+    /// Größere Lücken zwischen zwei Messungen (Tab war zu, Mac schlief) unterbrechen die Beobachtung.
+    public static let maxGap: TimeInterval = 30
 
     public init() {}
 
     public mutating func update(sample: SystemSample, top: [ActivityEntry], now: Date) -> [SlowdownHint] {
+        if let last = lastUpdate, now.timeIntervalSince(last) > Self.maxGap {
+            cpuSince = [:]; pressureSince = nil; swapSamples = []
+        }
+        lastUpdate = now
         var hints: [SlowdownHint] = []
         let needed = Self.requiredDuration
 
@@ -38,8 +45,8 @@ public struct SlowdownDetector: Sendable {
                 hints.append(SlowdownHint(
                     id: "cpu.\(entry.id)",
                     title: "\(entry.name) rechnet seit Minuten stark",
-                    text: "„\(entry.name)“ lastet den Prozessor seit einigen Minuten fast voll aus. "
-                        + "Wenn Du das Programm gerade nicht brauchst, kannst Du es in Ruhe beenden."))
+                    text: "\(entry.name) beansprucht den Prozessor seit einigen Minuten stark. "
+                        + "Wenn du das Programm gerade nicht brauchst, kannst du es in Ruhe beenden."))
             }
         }
         cpuSince = stillBusy
@@ -53,7 +60,7 @@ public struct SlowdownDetector: Sendable {
                     id: "pressure",
                     title: "Der Arbeitsspeicher ist seit Minuten knapp",
                     text: "Dein Mac hat seit einigen Minuten wenig freien Arbeitsspeicher. "
-                        + "Das Beenden großer Programme, die Du gerade nicht brauchst, schafft wieder Luft."))
+                        + "Das Beenden großer Programme, die du gerade nicht brauchst, schafft wieder Luft."))
             }
         } else {
             pressureSince = nil

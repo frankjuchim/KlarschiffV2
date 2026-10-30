@@ -50,9 +50,11 @@ public struct SpotlightProjectScanner: Sendable {
     private func walk(_ dir: URL, depth: Int, ctx: ScanContext, deadline: Date, into found: inout [(URL, String)]) {
         if Task.isCancelled || Date() >= deadline { return }
         let fm = FileManager.default
-        let keys: [URLResourceKey] = [.isDirectoryKey, .isSymbolicLinkKey]
+        let keys: [URLResourceKey] = [.isDirectoryKey, .isSymbolicLinkKey, .isPackageKey]
         guard let entries = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: keys) else { return }
         let names = Set(entries.map(\.lastPathComponent))
+        // Ein Ordner mit .metadata_never_index ist samt Inhalt von Spotlight ausgeschlossen.
+        if names.contains(".metadata_never_index") { return }
 
         for entry in entries {
             if Task.isCancelled || Date() >= deadline { return }
@@ -74,7 +76,7 @@ public struct SpotlightProjectScanner: Sendable {
                 }
                 continue
             }
-            if name.hasPrefix(".") { continue }
+            if name.hasPrefix(".") || values?.isPackage == true { continue }
             // Einträge von `dir` liegen auf Tiefe depth + 1 (≤ 6); Unterordner nur betreten, solange deren Inhalt ≤ 6 bleibt.
             if depth < Self.maxDepth - 1 {
                 walk(entry, depth: depth + 1, ctx: ctx, deadline: deadline, into: &found)

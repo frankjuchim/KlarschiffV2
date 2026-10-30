@@ -126,4 +126,33 @@ import Foundation
         let r = await SpotlightProjectScanner(sizeOf: { _ in Self.big }, timeLimit: 0).scan(ctx(tree))
         #expect(r.isEmpty)
     }
+
+    @Test func throwingSizeDropsCandidate() async throws {
+        struct Boom: Error {}
+        let tree = try FixtureTree()
+        try tree.dir("a/node_modules"); try tree.dir("b/Pods")
+        let s = SpotlightProjectScanner(sizeOf: { url in
+            if url.lastPathComponent == "Pods" { throw Boom() }
+            return Self.big
+        })
+        let r = await s.scan(ctx(tree))
+        #expect(rel(r, tree) == ["a/node_modules"])
+    }
+
+    @Test func packagesNotDescended() async throws {
+        let tree = try FixtureTree()
+        try tree.dir("Fotos.photoslibrary/node_modules")
+        try tree.dir("Thing.app/Contents/node_modules")
+        try tree.dir("ok/node_modules")
+        let r = await scanner().scan(ctx(tree))
+        #expect(rel(r, tree) == ["ok/node_modules"])
+    }
+
+    @Test func neverIndexMarkerExcludesSubtree() async throws {
+        let tree = try FixtureTree()
+        try tree.dir("x/y/node_modules"); try tree.file("x/.metadata_never_index", bytes: 0)
+        try tree.dir("z/node_modules")
+        let r = await scanner().scan(ctx(tree))
+        #expect(rel(r, tree) == ["z/node_modules"])
+    }
 }
