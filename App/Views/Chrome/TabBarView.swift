@@ -24,6 +24,9 @@ struct TabBarView: View {
         } label: {
             Label(tab.title, systemImage: tab.symbol)
                 .font(.system(size: 13, weight: .semibold))
+                // Nie umbrechen („Hintergrunddienste“ bei Mindestbreite).
+                .lineLimit(1)
+                .fixedSize()
                 .foregroundStyle(active ? Color.white : Color.primary)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 7)

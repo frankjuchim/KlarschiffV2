@@ -6,8 +6,31 @@ import Synchronization
 
 extension AppModel {
     /// Modell mit Fake-Abhängigkeiten; der „Scan“ liefert feste Funde (Instruments, iOS-Runtimes, TeX Live …).
-    static var preview: AppModel {
-        let model = AppModel(dependencies: .preview)
+    static var preview: AppModel { preview(dependencies: .preview) }
+
+    /// `--demo` (Bildschirmfotos der Website): wie die Vorschau, aber mit Vollzugriff (kein Hinweis-Banner).
+    static var demo: AppModel {
+        var deps = AppDependencies.preview
+        deps.fullDiskAccess = { true }
+        deps.engine = ScanEngine(scanners: [PreviewScanner(id: "preview.findings", findings: PreviewData.findings)])
+        let model = preview(dependencies: deps)
+        Task {
+            // Nach dem Vorschau-Scan: keine Migrationskarte (zeigt eigene Agent-Namen) und im Tab Entwickler
+            // eine typische Auswahl statt „0 kB“.
+            try? await Task.sleep(for: .milliseconds(300))
+            model.legacyItems = []
+            let picks = ["Instruments", "iOS 18.2", "TeX Live"]
+            for (_, findings) in model.findings(in: .developer) {
+                for f in findings where picks.contains(where: f.title.contains) && !model.isSelected(f.id) {
+                    model.toggle(f.id)
+                }
+            }
+        }
+        return model
+    }
+
+    private static func preview(dependencies: AppDependencies) -> AppModel {
+        let model = AppModel(dependencies: dependencies)
         Task {
             await model.scan(includeSlowChecks: false)
             // Nach dem Scan (der neu erkennt): feste Beispiele für Migrationskarte und Check-Verlauf.

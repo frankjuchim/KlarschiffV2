@@ -12,6 +12,15 @@ struct KlarschiffApp: App {
             || env["XCTestSessionIdentifier"] != nil
     }()
 
+    /// `--demo`: Vorschau-Daten statt echter Messungen (für Bildschirmfotos der Website); immer Trockenlauf,
+    /// ohne Updater. `--tab <storage|developer|systemData|services|performance>` öffnet direkt diesen Tab.
+    static let isDemo = CommandLine.arguments.contains("--demo")
+    static let startTab: AppTab? = {
+        let args = CommandLine.arguments
+        guard let i = args.firstIndex(of: "--tab"), i + 1 < args.count else { return nil }
+        return AppTab(rawValue: args[i + 1])
+    }()
+
     /// Besitzt das Modell (für den Mitteilungs-Klick) und führt den `--check`-Lauf ohne Fenster aus.
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
@@ -26,6 +35,7 @@ struct KlarschiffApp: App {
             }
             .frame(minWidth: 1000, minHeight: 720)
         }
+        .defaultSize(width: 1240, height: 880)
         .windowResizability(.contentMinSize)
         // `--check`: kein Fenster beim Start (der AppDelegate schließt zur Sicherheit trotzdem alle).
         .defaultLaunchBehavior(BackgroundCheck.isRequested ? .suppressed : .automatic)
@@ -70,8 +80,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     override init() {
         isCheckMode = BackgroundCheck.isRequested && !KlarschiffApp.isTestHost
-        model = (KlarschiffApp.isTestHost || isCheckMode) ? nil : AppModel(dependencies: .live())
-        updater = model == nil ? nil : AppUpdater()
+        if KlarschiffApp.isTestHost || isCheckMode {
+            model = nil
+        } else if KlarschiffApp.isDemo {
+            model = AppModel.demo
+        } else {
+            model = AppModel(dependencies: .live())
+        }
+        updater = (model == nil || KlarschiffApp.isDemo) ? nil : AppUpdater()
+        if let tab = KlarschiffApp.startTab { model?.selectedTab = tab }
         super.init()
     }
 
@@ -86,6 +103,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if KlarschiffApp.isDemo {
+            // Feste Fenstergröße für Bildschirmfotos (unabhängig von der gemerkten Größe).
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                for window in NSApp.windows where window.isVisible && window.styleMask.contains(.titled) {
+                    window.setContentSize(NSSize(width: 1240, height: 840))
+                    window.center()
+                }
+            }
+        }
         guard isCheckMode else { return }
         for window in NSApp.windows { window.close() }
         NSWorkspace.shared.notificationCenter.addObserver(
@@ -186,7 +212,7 @@ struct RootView: View {
                 VStack(alignment: .leading, spacing: 24) {
                     HStack(alignment: .top, spacing: 24) {
                         VStack(alignment: .leading, spacing: 16) {
-                            HeaderView(dryRun: model.dryRun)
+                            HeaderView(dryRun: model.dryRun && !KlarschiffApp.isDemo)
                             TabBarView(selection: $model.selectedTab)
                         }
                         Spacer(minLength: 0)

@@ -109,6 +109,12 @@ legt `build/Klarschiff-2-<Version>.dmg` ab (darin `Klarschiff 2.app` und eine Ve
 signiert die DMG für Sparkle und gibt am Ende den Befehl für das Website-Repository aus
 (`node scripts/klarschiff-release.mjs … --build … --signature …`).
 
+## Bildschirmfotos (Website)
+
+`--demo` startet die App mit Vorschau-Daten (Benutzer „vorschau“, keine echten Messungen, immer Trockenlauf,
+ohne Updater), `--tab <storage|developer|systemData|services|performance>` öffnet direkt einen Tab. Die
+Bilder für die Website liegen in `docs/website/` (Fenster 1240 × 840, Retina).
+
 ## Updates
 
 Sparkle prüft einmal täglich `https://frankjuchim.de/download/klarschiff/appcast.xml` (fragt beim zweiten Start,
