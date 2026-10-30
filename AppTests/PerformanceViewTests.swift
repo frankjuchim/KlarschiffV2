@@ -66,3 +66,9 @@ import KlarschiffCore
     let q = Sparkline.points([50, 200], maxValue: 100, size: size)
     #expect(q[1].y == p[1].y)
 }
+
+@Test func rowSelectionTogglesByID() {
+    #expect(ActivityList.toggledSelection(nil, tapped: "a") == "a")
+    #expect(ActivityList.toggledSelection("a", tapped: "b") == "b")
+    #expect(ActivityList.toggledSelection("a", tapped: "a") == nil)
+}

@@ -10,6 +10,8 @@ struct ActivityList: View {
     @State private var pendingQuit: ActivityEntry?
     @State private var isQuitting = false
     @State private var statusText: String?
+    /// Angeklickte Zeile (nach ID, damit die Markierung beim Umsortieren mitwandert).
+    @State private var selectedID: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -37,9 +39,18 @@ struct ActivityList: View {
                             quitDisabled: isQuitting || model.isRemoving
                         ) { pendingQuit = entry }
                         .padding(.vertical, 10)
+                        .padding(.horizontal, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(Color.accentColor.opacity(selectedID == entry.id ? 0.18 : 0))
+                        )
+                        .contentShape(.rect)
+                        .onTapGesture { selectedID = Self.toggledSelection(selectedID, tapped: entry.id) }
+                        .accessibilityAddTraits(selectedID == entry.id ? .isSelected : [])
                     }
                 }
             }
+            .animation(.smooth(duration: 0.35), value: entries.map(\.id))
             .glassCard(padding: 18)
         }
         .alert(
@@ -64,6 +75,11 @@ struct ActivityList: View {
             try? await Task.sleep(for: .seconds(5))
             if statusText == text { withAnimation { statusText = nil } }
         }
+    }
+
+    /// Klick markiert eine Zeile, ein zweiter Klick auf dieselbe hebt die Markierung auf.
+    nonisolated static func toggledSelection(_ current: String?, tapped: String) -> String? {
+        current == tapped ? nil : tapped
     }
 
     // MARK: - Texte
