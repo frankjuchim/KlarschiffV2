@@ -19,6 +19,13 @@ xcodegen generate
 SETTINGS="$(xcodebuild -project Klarschiff.xcodeproj -scheme Klarschiff -showBuildSettings 2>/dev/null)"
 VERSION="$(awk '$1 == "MARKETING_VERSION" { print $3; exit }' <<<"$SETTINGS")"
 BUILD_NUMBER="$(awk '$1 == "CURRENT_PROJECT_VERSION" { print $3; exit }' <<<"$SETTINGS")"
+TEAM="$(awk '$1 == "DEVELOPMENT_TEAM" { print $3; exit }' <<<"$SETTINGS")"
+SIGN_ID="$(security find-identity -v -p codesigning \
+  | awk -v team="($TEAM)" '/Developer ID Application/ && index($0, team) { print $2; exit }')"
+if [[ -z "$SIGN_ID" ]]; then
+  echo "Kein „Developer ID Application“-Zertifikat für Team $TEAM im Schlüsselbund." >&2
+  exit 1
+fi
 if [[ -z "$VERSION" || -z "$BUILD_NUMBER" ]]; then
   echo "MARKETING_VERSION/CURRENT_PROJECT_VERSION konnten nicht ermittelt werden." >&2
   exit 1
@@ -54,6 +61,11 @@ ditto "$APP" "$STAGE/Klarschiff 2.app"
 ln -s /Applications "$STAGE/Programme"
 hdiutil create -volname "Klarschiff 2" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
 rm -rf "$STAGE"
+
+# Auch die DMG signieren, notarisieren und das Ticket anheften (Gatekeeper prüft sie beim Öffnen).
+codesign --sign "$SIGN_ID" --timestamp "$DMG"
+xcrun notarytool submit "$DMG" --keychain-profile klarschiff-notary --wait
+xcrun stapler staple "$DMG"
 
 # Sparkle-Signatur (privater Schlüssel aus dem Schlüsselbund).
 SIGNATURE="$("$SIGN_UPDATE" "$DMG")"

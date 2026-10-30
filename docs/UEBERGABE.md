@@ -85,7 +85,7 @@ Alle fünf Teilprojekte sind umgesetzt. Was nur mit dir am Mac geht:
 - [ ] **Voller Festplattenzugriff** (TP2): Systemdaten erneut messen, Ziel mindestens 90 % zugeordnet (zuletzt 75,0 %); iCloud-Ordner `~/Library/Mobile Documents` braucht evtl. längere Frist.
 - [ ] **Anmeldeobjekte** (TP4): `sfltool dumpbtm` lieferte in der Agent-Sitzung auch nach über 2 Minuten nichts; der Reader bricht nach 20 s Zeitlimit ab und meldet „nicht lesbar“. In der echten App prüfen, ob die Liste erscheint.
 - [ ] **Leistung** (TP5): Kacheln gegen Aktivitätsanzeige (±10 %), „Beenden“ mit TextEdit, Spotlight-Karte, Finder-Lupe, Einstellungen-Button.
-- [ ] **Release**: `scripts/release.sh` samt Notarisierung einmal mit echtem Team und Profil durchlaufen lassen.
+- [x] **Release** (30.10.2026): `scripts/release.sh` mit Team `TR5R6DM2SW` und Notarisierung über App-Store-Connect-API-Schlüssel (Profil `klarschiff-notary`) durchgelaufen; App und DMG notarisiert, Gatekeeper „accepted“, Sparkle-Signatur erzeugt. Offen: Update-Erkennung mit einem zweiten Release (0.1.1, Build 2) prüfen; Sparkle-Schlüssel sichern (`generate_keys -x`).
 - [ ] Echte `softwareupdate -l`-Ausgabe festhalten, sobald ein Update ansteht (TP1).
 
 ## Startnachricht für die Sitzung auf dem Mac
