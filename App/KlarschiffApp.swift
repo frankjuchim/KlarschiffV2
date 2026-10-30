@@ -220,7 +220,8 @@ struct RootView: View {
             ServicesTabView()
                 .environment(model)
         case .performance:
-            PlaceholderTab(tab: model.selectedTab)
+            PerformanceTabView()
+                .environment(model)
         }
     }
 }

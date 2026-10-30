@@ -1,5 +1,6 @@
 import Foundation
 import KlarschiffCore
+import Synchronization
 
 // Fake-Daten für SwiftUI-Previews: kein echter Scan, keine echten Befehle, immer Trockenlauf.
 
@@ -54,7 +55,8 @@ extension AppDependencies {
             measureSystemRoots: { _ in [:] },
             notifier: PreviewNotifier(),
             agentService: PreviewAgentService(),
-            loadServices: { _ in ServicesLoad(items: PreviewServices.items, loginItemsFailed: false) })
+            loadServices: { _ in ServicesLoad(items: PreviewServices.items, loginItemsFailed: false) },
+            performance: .preview)
     }
 }
 
@@ -376,6 +378,83 @@ enum PreviewLegacy {
             CheckSnapshot(date: now.addingTimeInterval(-10 * 86_400), cleanableTotal: 31_200_000_000,
                           freeBytes: 240_000_000_000, totalBytes: 494_380_000_000, sizes: [:], titles: [:],
                           alerts: [.cleanable(total: 31_200_000_000)]),
+        ]
+    }
+}
+
+// MARK: - Leistung
+
+extension PerformanceDependencies {
+    /// Fake-Messung für die Vorschau: ruhiger Prozessor, einige Apps und Dienste, zwei Spotlight-Kandidaten.
+    /// Beenden wirkt nie.
+    static var preview: PerformanceDependencies {
+        let counter = PreviewCounter()
+        let boot = Date().addingTimeInterval(-9 * 3600)
+        return PerformanceDependencies(
+            systemSampler: PreviewSystemSampler(counter: counter, bootTime: boot),
+            processSampler: PreviewProcessSampler(counter: counter),
+            runningApps: {
+                [RunningAppInfo(pid: 202, bundleID: "com.apple.dt.Xcode", name: "Xcode",
+                                bundlePath: "/Applications/Xcode.app", isRegular: true),
+                 RunningAppInfo(pid: 203, bundleID: "com.apple.Safari", name: "Safari",
+                                bundlePath: "/Applications/Safari.app", isRegular: true)]
+            },
+            terminate: { _, _ in false },
+            spotlightScan: {
+                let home = URL(filePath: NSHomeDirectory())
+                return [
+                    SpotlightCandidate(url: home.appending(path: "Developer/webshop/node_modules"), kind: "node_modules",
+                                       size: 1_240_000_000),
+                    SpotlightCandidate(url: home.appending(path: "Developer/KlarschiffV2/.build"), kind: ".build",
+                                       size: 412_000_000),
+                ]
+            },
+            sleep: { try await Task.sleep(for: $0) }, now: { Date() })
+    }
+}
+
+/// Zählt die Vorschau-Ticks (gemeinsam für System- und Prozessprobe).
+private final class PreviewCounter: Sendable {
+    private let value = Mutex<UInt64>(0)
+    func next() -> UInt64 { value.withLock { $0 += 1; return $0 } }
+    var current: UInt64 { value.withLock { $0 } }
+}
+
+private struct PreviewSystemSampler: SystemSampling {
+    let counter: PreviewCounter
+    let bootTime: Date
+
+    func sample() -> SystemSample? {
+        let i = counter.next()
+        let busy = UInt64(25 + (i % 4) * 4)
+        return SystemSample(
+            date: Date(), cpu: CPUTicks(user: i * busy, system: i * 5, idle: i * (100 - busy - 5), nice: 0),
+            memoryUsed: 11_370_000_000, memoryTotal: 17_179_869_184, pressureLevel: 1,
+            swapUsed: 372_000_000, bootTime: bootTime)
+    }
+}
+
+private struct PreviewProcessSampler: ProcessSampling {
+    let counter: PreviewCounter
+
+    func sample() -> [ProcessSample] {
+        let i = counter.current
+        // CPU-Zeit wächst je Tick (2 s) um Anteil × 2 s.
+        func cpu(_ percent: Double) -> UInt64 { UInt64(Double(i) * percent / 100 * 2_000_000_000) }
+        return [
+            ProcessSample(pid: 101, startTime: 1, name: "mds_stores",
+                          path: "/System/Library/Frameworks/CoreServices.framework/Frameworks/Metadata.framework/Support/mds_stores",
+                          uid: 0, cpuTimeNs: cpu(62), residentBytes: 151_000_000),
+            ProcessSample(pid: 202, startTime: 1, name: "Xcode", path: "/Applications/Xcode.app/Contents/MacOS/Xcode",
+                          uid: 501, cpuTimeNs: cpu(14 + Double(i % 3)), residentBytes: 1_410_000_000),
+            ProcessSample(pid: 203, startTime: 1, name: "Safari", path: "/Applications/Safari.app/Contents/MacOS/Safari",
+                          uid: 501, cpuTimeNs: cpu(6), residentBytes: 420_000_000),
+            ProcessSample(pid: 204, startTime: 1, name: "Safari Helper",
+                          path: "/Applications/Safari.app/Contents/XPCServices/Helper.xpc/Contents/MacOS/Helper",
+                          uid: 501, cpuTimeNs: cpu(3), residentBytes: 210_000_000),
+            ProcessSample(pid: 105, startTime: 1, name: "WindowServer",
+                          path: "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+                          uid: 88, cpuTimeNs: cpu(9), residentBytes: 139_000_000),
         ]
     }
 }
