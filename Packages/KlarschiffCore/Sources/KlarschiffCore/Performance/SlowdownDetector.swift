@@ -1,0 +1,77 @@
+import Foundation
+
+/// Ein ruhiger Hinweis, was den Mac gerade bremst.
+public struct SlowdownHint: Sendable, Equatable, Identifiable {
+    public let id: String
+    public let title: String
+    public let text: String
+
+    public init(id: String, title: String, text: String) {
+        self.id = id
+        self.title = title
+        self.text = text
+    }
+}
+
+/// Meldet erst, wenn eine Bedingung mindestens 3 Minuten ununterbrochen gilt.
+public struct SlowdownDetector: Sendable {
+    public static let requiredDuration: TimeInterval = 180
+    public static let cpuThreshold: Double = 80
+    public static let swapGrowthThreshold: UInt64 = 1_000_000_000
+
+    private var cpuSince: [String: Date] = [:]
+    private var pressureSince: Date?
+    private var swapSamples: [(date: Date, used: UInt64)] = []
+
+    public init() {}
+
+    public mutating func update(sample: SystemSample, top: [ActivityEntry], now: Date) -> [SlowdownHint] {
+        var hints: [SlowdownHint] = []
+        let needed = Self.requiredDuration
+
+        // Apps mit hoher Last: je Eintrag eigener Startzeitpunkt, Unterbrechung setzt zurück.
+        var stillBusy: [String: Date] = [:]
+        for entry in top where entry.cpuPercent > Self.cpuThreshold {
+            let start = cpuSince[entry.id] ?? now
+            stillBusy[entry.id] = start
+            if now.timeIntervalSince(start) >= needed {
+                hints.append(SlowdownHint(
+                    id: "cpu.\(entry.id)",
+                    title: "\(entry.name) rechnet seit Minuten stark",
+                    text: "„\(entry.name)“ lastet den Prozessor seit einigen Minuten fast voll aus. "
+                        + "Wenn Du das Programm gerade nicht brauchst, kannst Du es in Ruhe beenden."))
+            }
+        }
+        cpuSince = stillBusy
+
+        // Speicherdruck.
+        if sample.pressureLevel >= 2 {
+            let start = pressureSince ?? now
+            pressureSince = start
+            if now.timeIntervalSince(start) >= needed {
+                hints.append(SlowdownHint(
+                    id: "pressure",
+                    title: "Der Arbeitsspeicher ist seit Minuten knapp",
+                    text: "Dein Mac hat seit einigen Minuten wenig freien Arbeitsspeicher. "
+                        + "Das Beenden großer Programme, die Du gerade nicht brauchst, schafft wieder Luft."))
+            }
+        } else {
+            pressureSince = nil
+        }
+
+        // Auslagerung wächst: aktuellen Wert mit dem ältesten Wert im 3-Minuten-Fenster vergleichen.
+        swapSamples.append((sample.date, sample.swapUsed))
+        let cutoff = now.addingTimeInterval(-needed)
+        // Eine Probe am oder vor der Grenze bleibt als Vergleichswert erhalten.
+        while swapSamples.count > 1, swapSamples[1].date <= cutoff { swapSamples.removeFirst() }
+        if let base = swapSamples.first, now.timeIntervalSince(base.date) >= needed,
+           sample.swapUsed > base.used, sample.swapUsed - base.used > Self.swapGrowthThreshold {
+            hints.append(SlowdownHint(
+                id: "swap",
+                title: "Dein Mac lagert gerade viel Speicher aus",
+                text: "In den letzten Minuten ist die Auslagerung auf die Festplatte deutlich gewachsen. "
+                    + "Das macht den Mac träge – weniger offene Programme helfen."))
+        }
+        return hints
+    }
+}
