@@ -8,8 +8,8 @@ struct PerformanceDependencies: Sendable {
     var systemSampler: any SystemSampling
     var processSampler: any ProcessSampling
     var runningApps: @Sendable () -> [RunningAppInfo]
-    /// Bittet die App höflich um das Beenden (nie erzwingen).
-    var terminate: @Sendable (Int32) async -> Bool
+    /// Bittet die App höflich um das Beenden (nie erzwingen); `expectedBundleID` schützt vor wiederverwendeten PIDs.
+    var terminate: @Sendable (_ pid: Int32, _ expectedBundleID: String?) async -> Bool
     var spotlightScan: @Sendable () async -> [SpotlightCandidate]
     var sleep: @Sendable (Duration) async throws -> Void
     var now: @Sendable () -> Date
@@ -18,7 +18,7 @@ struct PerformanceDependencies: Sendable {
     static var inert: PerformanceDependencies {
         PerformanceDependencies(
             systemSampler: InertSystemSampler(), processSampler: InertProcessSampler(),
-            runningApps: { [] }, terminate: { _ in false }, spotlightScan: { [] },
+            runningApps: { [] }, terminate: { _, _ in false }, spotlightScan: { [] },
             sleep: { try await Task.sleep(for: $0) }, now: { Date() })
     }
 
@@ -33,8 +33,13 @@ struct PerformanceDependencies: Sendable {
                         bundlePath: $0.bundleURL?.path, isRegular: $0.activationPolicy == .regular)
                 }
             },
-            terminate: { pid in
-                await MainActor.run { NSRunningApplication(processIdentifier: pid)?.terminate() ?? false }
+            terminate: { pid, expected in
+                await MainActor.run {
+                    guard let app = NSRunningApplication(processIdentifier: pid),
+                          app.activationPolicy == .regular,
+                          expected == nil || app.bundleIdentifier == expected else { return false }
+                    return app.terminate()
+                }
             },
             spotlightScan: spotlightScan,
             sleep: { try await Task.sleep(for: $0) }, now: { Date() })
@@ -84,6 +89,9 @@ final class PerformanceModel {
 
     func start() {
         guard task == nil else { return }
+        // Nach Pause frisch beginnen: alte Messstände ergäben falsche Deltas.
+        previousSystem = nil
+        previousProcesses = nil
         let sleep = deps.sleep
         task = Task { [weak self] in
             while !Task.isCancelled {
@@ -108,6 +116,12 @@ final class PerformanceModel {
         let apps = deps.runningApps()
         let now = deps.now()
 
+        // Zu große Lücke (Schlaf, Pause): keine Deltas aus dem alten Stand.
+        if let a = previousSystem?.date, let b = measured.system?.date,
+           b.timeIntervalSince(a) > SlowdownDetector.maxGap || b < a {
+            previousSystem = nil
+            previousProcesses = nil
+        }
         if let sys = measured.system {
             if let prev = previousSystem {
                 cpuLoad = PerformanceMath.cpuLoad(prev.cpu, sys.cpu)
@@ -154,7 +168,7 @@ final class PerformanceModel {
     func quit(_ e: ActivityEntry, dryRun: Bool) async -> String? {
         guard requestQuit(e), let pid = e.quitPID else { return "\(e.name) kann nicht beendet werden." }
         if dryRun { return "Trockenlauf: \(e.name) würde jetzt beendet." }
-        return await deps.terminate(pid) ? "\(e.name) wird beendet." : "\(e.name) konnte nicht beendet werden."
+        return await deps.terminate(pid, e.bundleID) ? "\(e.name) wird beendet." : "\(e.name) konnte nicht beendet werden."
     }
 
     // MARK: - Spotlight

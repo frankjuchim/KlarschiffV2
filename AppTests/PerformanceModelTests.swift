@@ -7,12 +7,15 @@ private final class FakeSystem: SystemSampling, @unchecked Sendable {
     private let lock = NSLock()
     private var n: UInt64 = 0
     private var gate: DispatchSemaphore?
+    private var offset: Double = 0
+    func jump(_ seconds: Double) { lock.lock(); offset += seconds; lock.unlock() }
+    var count: UInt64 { lock.lock(); defer { lock.unlock() }; return n }
     func blockNext(_ g: DispatchSemaphore) { lock.lock(); gate = g; lock.unlock() }
     func sample() -> SystemSample? {
-        lock.lock(); n += 1; let i = n; let g = gate; gate = nil; lock.unlock()
+        lock.lock(); n += 1; let i = n; let g = gate; gate = nil; let off = offset; lock.unlock()
         g?.wait()
         return SystemSample(
-            date: Date(timeIntervalSince1970: Double(i) * 2),
+            date: Date(timeIntervalSince1970: Double(i) * 2 + off),
             cpu: CPUTicks(user: i * 50, system: i * 10, idle: i * 40, nice: 0),
             memoryUsed: 8, memoryTotal: 16, pressureLevel: 1, swapUsed: 0, bootTime: Date(timeIntervalSince1970: 0))
     }
@@ -44,7 +47,7 @@ private func makeModel(system: FakeSystem = FakeSystem(), calls: Calls = Calls()
 {
     PerformanceModel(dependencies: PerformanceDependencies(
         systemSampler: system, processSampler: FakeProcesses(), runningApps: { [] },
-        terminate: { calls.terminate($0); return terminateResult },
+        terminate: { pid, _ in calls.terminate(pid); return terminateResult },
         spotlightScan: { calls.scan(); return [] },
         sleep: { _ in try await Task.sleep(for: .seconds(3600)) }, now: { Date() }))
 }
@@ -78,12 +81,40 @@ private func makeModel(system: FakeSystem = FakeSystem(), calls: Calls = Calls()
 }
 
 @Test @MainActor func startIsIdempotentAndStopCancels() async {
-    let m = makeModel()
+    let system = FakeSystem()
+    let m = makeModel(system: system)
     m.start(); m.start()
+    try? await Task.sleep(for: .milliseconds(300))
+    #expect(system.count == 1)
+    m.stop()
+    let after = system.count
     try? await Task.sleep(for: .milliseconds(200))
-    #expect(m.memoryTotal == 16)
+    #expect(system.count == after)
+}
+
+@Test @MainActor func restartBeginsFresh() async {
+    let m = makeModel()
+    await m.tick()
+    await m.tick()
+    #expect(m.cpuHistory.count == 1)
     m.stop()
+    m.start()
+    try? await Task.sleep(for: .milliseconds(300))
     m.stop()
+    #expect(m.cpuHistory.count == 1)
+}
+
+@Test @MainActor func largeClockGapAddsNoEntry() async {
+    let system = FakeSystem()
+    let m = makeModel(system: system)
+    await m.tick()
+    await m.tick()
+    #expect(m.cpuHistory.count == 1)
+    system.jump(60)
+    await m.tick()
+    #expect(m.cpuHistory.count == 1)
+    await m.tick()
+    #expect(m.cpuHistory.count == 2)
 }
 
 @Test @MainActor func quitOnlyWhenAllowed() async {
