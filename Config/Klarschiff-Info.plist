@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Sparkle: Update-Feed der Website (fest, nicht ohne Rückfrage ändern) -->
+	<key>SUFeedURL</key>
+	<string>https://frankjuchim.de/download/klarschiff/appcast.xml</string>
+	<!-- Öffentlicher EdDSA-Schlüssel; der private liegt im Schlüsselbund (generate_keys) -->
+	<key>SUPublicEDKey</key>
+	<string>y58ZOLFPCdxJ64mLTtDxql5ZWs3ss2fxuQ+WLp+wscM=</string>
+	<!-- Einmal täglich prüfen (Sparkle fragt beim zweiten Start, ob automatisch gesucht werden darf) -->
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
+</dict>
+</plist>

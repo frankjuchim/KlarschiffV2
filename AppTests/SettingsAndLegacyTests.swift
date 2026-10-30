@@ -333,3 +333,10 @@ private func removeHome(_ home: URL) { try? FileManager.default.removeItem(at: h
     #expect(ResultBanner.headline(ok, legacy: true, dryRun: true) == "Alte Automatik entfernt. (Trockenlauf)")
     #expect(ResultBanner.headline(ok, legacy: false, dryRun: false) == "\(ByteFormat.string(0)) frei geworden.")
 }
+
+@Test func sparkleKeysAreInInfoPlist() {
+    let info = Bundle.main.infoDictionary ?? [:]
+    #expect(info["SUFeedURL"] as? String == "https://frankjuchim.de/download/klarschiff/appcast.xml")
+    #expect((info["SUPublicEDKey"] as? String)?.isEmpty == false)
+    #expect(info["CFBundleIdentifier"] as? String == "de.frankjuchim.klarschiff2")
+}

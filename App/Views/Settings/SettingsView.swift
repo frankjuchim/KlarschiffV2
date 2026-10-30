@@ -7,6 +7,8 @@ import KlarschiffCore
 /// Statuszeile und Verlauf.
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
+    /// nil in Vorschauen; sonst Abschnitt „Updates“.
+    var updater: AppUpdater? = nil
 
     static let explanation = "Der Check meldet sich nur, wenn es sich lohnt – und löscht nie etwas."
     static let notificationSettingsURL = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension")!
@@ -63,6 +65,10 @@ struct SettingsView: View {
                 }
             } header: {
                 Text("Automatischer Check")
+            }
+
+            if let updater {
+                UpdateSettingsSection(updater: updater)
             }
 
             Section("Verlauf") {

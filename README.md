@@ -92,12 +92,25 @@ Einmalig einrichten:
    ```sh
    xcrun notarytool store-credentials klarschiff-notary
    ```
+3. Sparkle-Schlüssel: liegt im Schlüsselbund (angelegt am 30.10.2026 mit `generate_keys`), der öffentliche
+   Schlüssel steht in `Config/Klarschiff-Info.plist`. **Sichern**, sonst lassen sich keine Updates mehr signieren:
+   `generate_keys -x <Datei>` (Werkzeug unter `build/SourcePackages/artifacts/sparkle/Sparkle/bin/` nach dem
+   ersten Release) und die Datei an einem sicheren Ort ablegen.
 
-Dann:
+Vor jedem Release in `project.yml` `MARKETING_VERSION` (z. B. 0.2.0) und `CURRENT_PROJECT_VERSION` (z. B. 2)
+erhöhen – Sparkle erkennt ein Update an der höheren `CURRENT_PROJECT_VERSION`. Dann:
 
 ```sh
 scripts/release.sh
 ```
 
-Das Skript erzeugt das Projekt, archiviert, exportiert (Developer ID), notarisiert, heftet das Ticket an und
-legt `build/Klarschiff-2-<Version>.dmg` (darin `Klarschiff 2.app`) ab. Die Version stammt aus `MARKETING_VERSION` in `project.yml`.
+Das Skript erzeugt das Projekt, archiviert, exportiert (Developer ID), notarisiert, heftet das Ticket an,
+legt `build/Klarschiff-2-<Version>.dmg` ab (darin `Klarschiff 2.app` und eine Verknüpfung zu Programme),
+signiert die DMG für Sparkle und gibt am Ende den Befehl für das Website-Repository aus
+(`node scripts/klarschiff-release.mjs … --build … --signature …`).
+
+## Updates
+
+Sparkle prüft einmal täglich `https://frankjuchim.de/download/klarschiff/appcast.xml` (fragt beim zweiten Start,
+ob automatisch gesucht werden darf). Von Hand: App-Menü → „Nach Updates suchen …“ oder Einstellungen → Updates.
+Der Feed wird von der Website aus deren `src/data/klarschiff.json` erzeugt; die Adressen nicht ohne Rückfrage ändern.

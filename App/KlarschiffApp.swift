@@ -30,6 +30,11 @@ struct KlarschiffApp: App {
         // `--check`: kein Fenster beim Start (der AppDelegate schließt zur Sicherheit trotzdem alle).
         .defaultLaunchBehavior(BackgroundCheck.isRequested ? .suppressed : .automatic)
         .commands {
+            if let updater = appDelegate.updater {
+                CommandGroup(after: .appInfo) {
+                    CheckForUpdatesButton(updater: updater)
+                }
+            }
             if let model = appDelegate.model {
                 CommandMenu("Entwickler") {
                     DryRunToggle(model: model)
@@ -40,7 +45,7 @@ struct KlarschiffApp: App {
         // ⌘, – Einstellungen des automatischen Checks.
         Settings {
             if let model = appDelegate.model {
-                SettingsView()
+                SettingsView(updater: appDelegate.updater)
                     .environment(model)
             }
         }
@@ -52,6 +57,8 @@ struct KlarschiffApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     let model: AppModel?
+    /// Sparkle nur im normalen Start (nicht beim Hintergrund-Check, nicht als Test-Host).
+    let updater: AppUpdater?
     private let isCheckMode: Bool
     /// `--check`: Erst nach dem Lauf (oder dem Wächter) beenden – SwiftUI beendet eine Ein-Fenster-App sonst,
     /// sobald kein Fenster offen ist.
@@ -64,6 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     override init() {
         isCheckMode = BackgroundCheck.isRequested && !KlarschiffApp.isTestHost
         model = (KlarschiffApp.isTestHost || isCheckMode) ? nil : AppModel(dependencies: .live())
+        updater = model == nil ? nil : AppUpdater()
         super.init()
     }
 

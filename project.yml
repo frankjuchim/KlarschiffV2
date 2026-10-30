@@ -9,6 +9,10 @@ configFiles:
 packages:
   KlarschiffCore:
     path: Packages/KlarschiffCore
+  # Automatische Updates (Feed und Schlüssel in Config/Klarschiff-Info.plist).
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: 2.10.1
 settings:
   base:
     SWIFT_VERSION: "6.0"
@@ -31,6 +35,7 @@ targets:
     dependencies:
       - package: KlarschiffCore
         product: KlarschiffCore
+      - package: Sparkle
     settings:
       base:
         # Anzeigename „Klarschiff 2“ (Dock, Menüleiste, Finder: Klarschiff 2.app); Modulname bleibt `Klarschiff`.
@@ -41,6 +46,8 @@ targets:
         CODE_SIGN_ENTITLEMENTS: App/Klarschiff.entitlements
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: YES
+        # Ergänzt die erzeugte Info.plist um die Sparkle-Schlüssel (SUFeedURL, SUPublicEDKey).
+        INFOPLIST_FILE: Config/Klarschiff-Info.plist
         INFOPLIST_KEY_CFBundleDevelopmentRegion: de
         INFOPLIST_KEY_CFBundleDisplayName: "Klarschiff 2"
         INFOPLIST_KEY_NSAppleEventsUsageDescription: "Klarschiff 2 bittet den Finder, den Papierkorb zu leeren."
