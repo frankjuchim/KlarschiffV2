@@ -27,6 +27,22 @@ public struct ActivityEntry: Sendable, Identifiable, Equatable {
     /// PID des einen regulären App-Prozesses, den „Beenden“ treffen darf; nil, wenn canQuit false ist.
     public let quitPID: Int32?
     public let history: [Double]
+
+    public init(id: String, name: String, appPath: String?, bundleID: String?, processCount: Int,
+                residentBytes: UInt64, cpuPercent: Double, isSystem: Bool, canQuit: Bool,
+                quitPID: Int32?, history: [Double]) {
+        self.id = id
+        self.name = name
+        self.appPath = appPath
+        self.bundleID = bundleID
+        self.processCount = processCount
+        self.residentBytes = residentBytes
+        self.cpuPercent = cpuPercent
+        self.isSystem = isSystem
+        self.canQuit = canQuit
+        self.quitPID = quitPID
+        self.history = history
+    }
 }
 
 public struct ActivityAggregator: Sendable {

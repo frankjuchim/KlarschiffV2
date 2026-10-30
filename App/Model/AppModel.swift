@@ -64,6 +64,8 @@ struct AppDependencies: Sendable {
     var loadLaunchItems: @Sendable (ScanContext) async -> [LaunchItem] = { _ in [] }
     /// Für den Check: Labels der entfernbaren verwaisten Hintergrunddienste; Standard: keine.
     var orphanedServices: CheckRunner.OrphanedServices = { _ in [] }
+    /// Messung und Beenden für den Tab „Leistung“; Standard: ohne Wirkung.
+    var performance: PerformanceDependencies = .inert
 
     /// Der löschfreie Teil – dieselben Bausteine wie der normale Scan, ohne Remover.
     var check: CheckDependencies {
@@ -141,6 +143,9 @@ final class AppModel {
     /// Wirksamer Trockenlauf: Startargument ODER Schalter. Wird in jeden Plan erzwungen.
     var dryRun: Bool { isDryRunForced || dryRunSetting }
 
+    /// Live-Messung des Tabs „Leistung“ (gehört der App, damit der Verlauf Tab-Wechsel überlebt).
+    let performance: PerformanceModel
+
     @ObservationIgnored private let deps: AppDependencies
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var findingsByID: [FindingID: Finding] = [:]
@@ -158,6 +163,7 @@ final class AppModel {
 
     init(dependencies: AppDependencies, defaults: UserDefaults = .standard) {
         deps = dependencies
+        performance = PerformanceModel(dependencies: dependencies.performance)
         self.defaults = defaults
         isDryRunForced = dependencies.dryRun
         dryRunSetting = defaults.bool(forKey: Self.dryRunDefaultsKey)
@@ -884,7 +890,10 @@ extension AppDependencies {
             agentService: SMAppAgentService(),
             loadServices: { ctx in await loadServicesLive(ctx) },
             loadLaunchItems: { ctx in await LaunchItemScanner().scan(ctx) },
-            orphanedServices: check.orphanedServices)
+            orphanedServices: check.orphanedServices,
+            performance: .live(spotlightScan: {
+                await SpotlightProjectScanner().scan(check.makeContext(false))
+            }))
     }
 
     /// LaunchAgents/-Daemons und Anmeldeobjekte parallel lesen (nur lesend).
