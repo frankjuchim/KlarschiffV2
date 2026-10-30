@@ -26,6 +26,19 @@ import KlarschiffCore
     #expect(PerformanceTabView.cpuValueText(load: 1.2, hasValue: true) == "100 %")
 }
 
+@Test func cpuTileWordMatchesDisplayedRoundedValue() {
+    // 0,296 wird als „30 %“ angezeigt – das Wort muss dazu passen.
+    #expect(PerformanceTabView.cpuValueText(load: 0.296, hasValue: true) == "30 %")
+    #expect(PerformanceTabView.cpuWord(load: 0.296, hasValue: true) == "beschäftigt")
+    #expect(PerformanceTabView.cpuWord(load: 0.294, hasValue: true) == "kühl")
+    #expect(PerformanceTabView.cpuWord(load: 0.696, hasValue: true) == "unter Last")
+    #expect(PerformanceTabView.cpuWord(load: 0.5, hasValue: false) == " ")
+}
+
+@Test func spotlightExplanationMentionsExistingExclusions() {
+    #expect(SpotlightCard.explanation.contains("schon ausgeschlossen"))
+}
+
 @Test func memoryAndSwapTilesUseBinaryUnitsAndWords() {
     let total: UInt64 = 17_179_869_184
     let m = PerformanceTabView.memoryTexts(used: 8_589_934_592, total: total, pressure: 2)

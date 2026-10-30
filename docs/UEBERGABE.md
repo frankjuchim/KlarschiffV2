@@ -67,8 +67,8 @@
 - Apple-Dienste ohne `com.apple.`-Präfix gelten nicht als Apple-Dienste durch das Präfix, sind aber geschützt (nie als entfernbar angeboten).
 
 ## Stand Teilprojekt 5 – Leistung (30.10.2026)
-- Tab „Leistung“: Kacheln für Prozessor, Arbeitsspeicher (mit Speicherdruck), Auslagerung und Laufzeit, Top-12-Liste der Apps (Prozesse gebündelt, RAM, CPU mit Verlauf), „Beenden“ für reguläre Apps (nie Finder, Klarschiff 2 oder Systemdienste), Hinweise auf Bremser und eine Spotlight-Karte mit großen Projektordnern (`node_modules`, `.build` …). Alles lesend, nichts wird automatisch beendet oder verändert.
-- Lese-Messung auf Franks Mac: CPU 45 %, Speicher 11,66 GB von 16 GB (Druck entspannt), Auslagerung 1,5 GB, 823 Prozesse, 2 Spotlight-Kandidaten (je über 200 MB). Details: Abnahme-Abschnitt „Teilprojekt 5“. Opt-in-Livetest `livePerformanceWritesSummary` (`KLARSCHIFF_LIVE_SCAN=1`).
+- Tab „Leistung“: Kacheln für Prozessor, Arbeitsspeicher (mit Speicherdruck), Auslagerung und Laufzeit, Top-12-Liste der Apps (Prozesse gebündelt, RAM, CPU mit Verlauf), „Beenden“ für reguläre Apps (nie Finder, Klarschiff 2 oder Systemdienste), Hinweise auf Bremser und eine Spotlight-Karte mit großen Projektordnern (`node_modules`, `Pods` …; Punkt-Ordner nicht, die indiziert Spotlight ohnehin nicht). Alles lesend, nichts wird automatisch beendet oder verändert.
+- Lese-Messung auf Franks Mac (Nachmessung nach Gesamtprüfung): CPU 40 %, Speicher 11,07 GB von 16 GB (Druck entspannt), Auslagerung 1,5 GB, 831 Prozesse, 0 Spotlight-Kandidaten – die beiden früheren Treffer (`.venv`, `.build`) sind Punkt-Ordner und werden nicht mehr gemeldet. Details: Abnahme-Abschnitt „Teilprojekt 5“. Opt-in-Livetest `livePerformanceWritesSummary` (`KLARSCHIFF_LIVE_SCAN=1`).
 
 ### Offen für Frank (TP5)
 - [ ] Kacheln mit der Aktivitätsanzeige vergleichen (±10 %).

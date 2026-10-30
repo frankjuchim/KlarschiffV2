@@ -42,11 +42,7 @@ public struct SlowdownDetector: Sendable {
             let start = cpuSince[entry.id] ?? now
             stillBusy[entry.id] = start
             if now.timeIntervalSince(start) >= needed {
-                hints.append(SlowdownHint(
-                    id: "cpu.\(entry.id)",
-                    title: "\(entry.name) rechnet seit Minuten stark",
-                    text: "\(entry.name) beansprucht den Prozessor seit einigen Minuten stark. "
-                        + "Wenn du das Programm gerade nicht brauchst, kannst du es in Ruhe beenden."))
+                hints.append(Self.cpuHint(for: entry))
             }
         }
         cpuSince = stillBusy
@@ -58,7 +54,7 @@ public struct SlowdownDetector: Sendable {
             if now.timeIntervalSince(start) >= needed {
                 hints.append(SlowdownHint(
                     id: "pressure",
-                    title: "Der Arbeitsspeicher ist seit Minuten knapp",
+                    title: "Der Arbeitsspeicher ist seit Minuten \(PerformanceWords.memory(pressure: sample.pressureLevel))",
                     text: "Dein Mac hat seit einigen Minuten wenig freien Arbeitsspeicher. "
                         + "Das Beenden großer Programme, die du gerade nicht brauchst, schafft wieder Luft."))
             }
@@ -80,5 +76,26 @@ public struct SlowdownDetector: Sendable {
                     + "Das macht den Mac träge – weniger offene Programme helfen."))
         }
         return hints
+    }
+
+    /// Beenden wird nur vorgeschlagen, wenn Klarschiff 2 das Programm auch beenden darf.
+    static func cpuHint(for entry: ActivityEntry) -> SlowdownHint {
+        let id = "cpu.\(entry.id)"
+        if entry.isSystem {
+            return SlowdownHint(
+                id: id, title: "\(entry.name) arbeitet seit Minuten viel",
+                text: "Ein Systemdienst ist gerade sehr beschäftigt – das ist meist vorübergehend "
+                    + "(zum Beispiel Fotos-Analyse oder Spotlight). Am besten abwarten.")
+        }
+        if !entry.canQuit {
+            return SlowdownHint(
+                id: id, title: "\(entry.name) arbeitet seit Minuten viel",
+                text: "\(entry.name) beansprucht den Prozessor seit einigen Minuten stark. "
+                    + "Oft ist das nach einer Weile vorbei – falls nicht, lohnt ein Blick, was das Programm gerade tut.")
+        }
+        return SlowdownHint(
+            id: id, title: "\(entry.name) rechnet seit Minuten stark",
+            text: "\(entry.name) beansprucht den Prozessor seit einigen Minuten stark. "
+                + "Wenn du das Programm gerade nicht brauchst, kannst du es in Ruhe beenden.")
     }
 }

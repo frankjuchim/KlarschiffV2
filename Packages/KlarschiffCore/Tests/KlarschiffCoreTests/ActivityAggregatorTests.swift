@@ -198,4 +198,52 @@ import Foundation
         #expect((me?.residentBytes ?? 0) > 0)
         #expect((me?.startTime ?? 0) > 0)
     }
+
+    @Test func cryptexSafariIsRegularAppNotSystem() {
+        var agg = ActivityAggregator()
+        let bundle = "/System/Volumes/Preboot/Cryptexes/App/System/Applications/Safari.app"
+        let cur = [p(5, "Safari", path: bundle + "/Contents/MacOS/Safari")]
+        let apps = [RunningAppInfo(pid: 5, bundleID: "com.apple.Safari", name: "Safari", bundlePath: bundle, isRegular: true)]
+        let e = agg.update(previous: [], current: cur, interval: 2, apps: apps)[0]
+        #expect(e.id == "/System/Applications/Safari.app")
+        #expect(e.appPath == bundle)   // Originalpfad fürs Symbol
+        #expect(e.isSystem == false)
+        #expect(e.canQuit == true)
+        #expect(e.quitPID == 5)
+    }
+
+    @Test func cryptexPathsAreNormalized() {
+        #expect(ActivityAggregator.normalizedPath("/System/Cryptexes/App/System/Applications/Safari.app")
+            == "/System/Applications/Safari.app")
+        #expect(ActivityAggregator.normalizedPath("/System/Volumes/Preboot/Cryptexes/App/usr/libexec/x") == "/usr/libexec/x")
+        #expect(ActivityAggregator.normalizedPath("/System/Cryptexes/Apple") == "/System/Cryptexes/Apple")
+        #expect(ActivityAggregator.normalizedPath("/Applications/Foo.app") == "/Applications/Foo.app")
+        // Ein Hilfsprozess aus dem Cryptex ohne reguläre App bleibt ein Systemprozess.
+        let helper = p(7, "SafariHelper",
+                       path: "/System/Cryptexes/App/System/Applications/Safari.app/Contents/XPCServices/H")
+        #expect(ActivityAggregator.isSystemProcess(helper))
+    }
+
+    @Test func versionNamedExecutableGetsToolName() {
+        var agg = ActivityAggregator()
+        let cur = [p(1, "2.1.310", path: "/Users/x/.local/share/claude/versions/2.1.310"),
+                   p(2, "2.1.309", path: "/Users/x/.local/share/claude/versions/2.1.309"),
+                   p(3, "v20.11.0", path: "/Users/x/.nvm/versions/node/v20.11.0/bin/v20.11.0"),
+                   p(4, "1.2", path: nil),
+                   p(5, "zsh", path: "/bin/zsh")]
+        let out = agg.update(previous: [], current: cur, interval: 2, apps: [])
+        let claude = out.first { $0.id == "claude" }
+        #expect(claude?.name == "claude")
+        #expect(claude?.processCount == 2)
+        #expect(out.first { $0.id == "node" }?.name == "node")
+        #expect(out.contains { $0.id == "1.2" })
+        #expect(out.contains { $0.id == "zsh" })
+    }
+
+    @Test func versionLikeNames() {
+        for s in ["2.1.310", "v20.11.0", "1.2", "1.2.3-beta", "3.12.1+build"] { #expect(ActivityAggregator.isVersionLike(s)) }
+        for s in ["claude", "2", "v2", "node20", "1.x"] { #expect(!ActivityAggregator.isVersionLike(s)) }
+        #expect(ActivityAggregator.nameForVersionedExecutable(name: "1.0.0", path: "/opt/.tool/releases/latest/1.0.0") == "tool")
+        #expect(ActivityAggregator.nameForVersionedExecutable(name: "claude", path: "/a/b/claude") == nil)
+    }
 }

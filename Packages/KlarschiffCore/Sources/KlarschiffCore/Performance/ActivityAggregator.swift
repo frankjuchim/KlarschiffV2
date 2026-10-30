@@ -54,6 +54,12 @@ public struct ActivityAggregator: Sendable {
         return ids
     }
     static let systemPrefixes = ["/System/", "/usr/libexec/", "/usr/sbin/", "/sbin/"]
+    /// Apps aus dem Cryptex (z. B. Safari) laufen unter diesen Präfixen; ohne sie gelten die üblichen Pfade.
+    static let cryptexPrefixes = ["/System/Volumes/Preboot/Cryptexes/App", "/System/Cryptexes/App"]
+    /// Ordnernamen, die bei versionsbenannten Programmen nichts über das Programm aussagen.
+    static let genericDirNames: Set<String> = [
+        "versions", "version", "bin", "sbin", "lib", "libexec", "current", "latest", "releases",
+    ]
 
     private var histories: [String: [Double]] = [:]
 
@@ -66,13 +72,40 @@ public struct ActivityAggregator: Sendable {
         return "/" + comps[0...i].joined(separator: "/")
     }
 
+    /// Entfernt ein führendes Cryptex-Präfix: `/System/Volumes/Preboot/Cryptexes/App/System/Applications/Safari.app`
+    /// wird zu `/System/Applications/Safari.app`.
+    static func normalizedPath(_ path: String) -> String {
+        for prefix in cryptexPrefixes where path.hasPrefix(prefix + "/") {
+            return String(path.dropFirst(prefix.count))
+        }
+        return path
+    }
+
     static func isSystemProcess(_ p: ProcessSample, regularApp: Bool = false) -> Bool {
         if p.uid < 500 { return true }   // root und _-Dienstkonten
+        guard let path = p.path.map(normalizedPath) else { return false }
         // Reguläre Apps unter /System/Applications (z. B. Safari) sind keine Systemdienste,
         // alles andere unter /System (z. B. CoreServices) schon.
-        if regularApp, p.path?.hasPrefix("/System/Applications/") == true { return false }
-        if let path = p.path, systemPrefixes.contains(where: { path.hasPrefix($0) }) { return true }
-        return false
+        if regularApp, path.hasPrefix("/System/Applications/") { return false }
+        return systemPrefixes.contains(where: { path.hasPrefix($0) })
+    }
+
+    /// „2.1.310“, „v20.11.0“, „1.2.3-beta“.
+    static func isVersionLike(_ s: String) -> Bool {
+        s.wholeMatch(of: /v?\d+(\.\d+)+([-+._].*)?/) != nil
+    }
+
+    /// Für Programme, die nach ihrer Version heißen (`~/.local/share/claude/versions/2.1.310`): der erste
+    /// aussagekräftige Ordnername von hinten („claude“), sonst nil.
+    static func nameForVersionedExecutable(name: String, path: String?) -> String? {
+        guard isVersionLike(name), let path else { return nil }
+        for comp in path.split(separator: "/").reversed() {
+            var c = String(comp)
+            if c.hasPrefix(".") { c.removeFirst() }
+            if c.isEmpty || isVersionLike(c) || genericDirNames.contains(c.lowercased()) { continue }
+            return c
+        }
+        return nil
     }
 
     private struct Group {
@@ -101,9 +134,11 @@ public struct ActivityAggregator: Sendable {
             let appPath: String?
             if let info, info.isRegular, let bp = info.bundlePath { appPath = bp }
             else { appPath = p.path.flatMap(Self.outermostApp) ?? info?.bundlePath }
-            let id = appPath ?? p.name
+            // Gruppiert wird nach dem Pfad ohne Cryptex-Präfix; der Originalpfad bleibt fürs Symbol erhalten.
+            let plainName = appPath == nil ? Self.nameForVersionedExecutable(name: p.name, path: p.path) ?? p.name : p.name
+            let id = appPath.map(Self.normalizedPath) ?? plainName
             var g = groups[id] ?? Group(
-                name: appPath.map { (($0 as NSString).lastPathComponent as NSString).deletingPathExtension } ?? p.name,
+                name: appPath.map { (($0 as NSString).lastPathComponent as NSString).deletingPathExtension } ?? plainName,
                 appPath: appPath)
             if let info {
                 if g.bundleID == nil { g.bundleID = info.bundleID }
@@ -131,7 +166,7 @@ public struct ActivityAggregator: Sendable {
             newHistories[id] = h
             let isSystem = g.allSystem
             // Genau ein regulärer Prozess, dessen Bundle-Pfad die Gruppe ist; sonst nie beenden.
-            let mains = g.regularInfos.filter { $0.bundlePath == g.appPath }
+            let mains = g.regularInfos.filter { $0.bundlePath.map(Self.normalizedPath) == id }
             let main = mains.count == 1 ? mains[0] : nil
             let protected = g.protected || (g.appPath?.hasSuffix("Finder.app") ?? false)
             let quitPID = (main != nil && !isSystem && !protected) ? main?.pid : nil

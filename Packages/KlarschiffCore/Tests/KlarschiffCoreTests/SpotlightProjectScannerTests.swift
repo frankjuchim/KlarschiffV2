@@ -22,12 +22,12 @@ import Foundation
 
     @Test func findsPlainKinds() async throws {
         let tree = try FixtureTree()
-        for k in ["node_modules", ".build", "Pods", ".venv", "venv", "__pycache__", "DerivedData", ".gradle"] {
+        for k in ["node_modules", "Pods", "venv", "__pycache__", "DerivedData"] {
             try tree.dir("proj/\(k)")
         }
         let r = await scanner().scan(ctx(tree))
-        #expect(r.count == 8)
-        #expect(Set(r.map(\.kind)) == ["node_modules", ".build", "Pods", ".venv", "venv", "__pycache__", "DerivedData", ".gradle"])
+        #expect(r.count == 5)
+        #expect(Set(r.map(\.kind)) == ["node_modules", "Pods", "venv", "__pycache__", "DerivedData"])
         #expect(r.allSatisfy { $0.id == $0.url.path && $0.size == Self.big })
     }
 
@@ -92,12 +92,14 @@ import Foundation
         #expect(r.isEmpty)
     }
 
-    @Test func hiddenDirsSkippedExceptTargets() async throws {
+    /// Spotlight indiziert Punkt-Ordner nicht: weder als Kandidat melden noch betreten.
+    @Test func hiddenDirsNeitherReportedNorDescended() async throws {
         let tree = try FixtureTree()
         try tree.dir(".hidden/node_modules")
-        try tree.dir("p/.build")
+        try tree.dir("p/.build"); try tree.dir("p/.venv"); try tree.dir("p/.gradle")
+        try tree.dir("p/node_modules")
         let r = await scanner().scan(ctx(tree))
-        #expect(rel(r, tree) == ["p/.build"])
+        #expect(rel(r, tree) == ["p/node_modules"])
     }
 
     @Test func depthLimit() async throws {

@@ -119,13 +119,16 @@ private struct ActivityRow: View {
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
+            .accessibilityElement(children: .combine)
             Spacer(minLength: 12)
             Sparkline(values: entry.history, maxValue: 100, color: entry.cpuPercent >= 50 ? .orange : Theme.turquoise)
                 .frame(width: 125, height: 26)
+                .accessibilityHidden(true)
             Text(ActivityList.cpuText(entry.cpuPercent))
                 .font(.system(size: 15, weight: .semibold))
                 .monospacedDigit()
                 .frame(width: 72, alignment: .trailing)
+                .accessibilityLabel("Prozessor \(ActivityList.cpuText(entry.cpuPercent))")
             Group {
                 if canQuit {
                     Button(action: onQuit) {
@@ -148,8 +151,8 @@ private struct ActivityRow: View {
     }
 
     @ViewBuilder private var icon: some View {
-        if let path = entry.appPath, FileManager.default.fileExists(atPath: path) {
-            Image(nsImage: NSWorkspace.shared.icon(forFile: path))
+        if let path = entry.appPath, let image = AppIconCache.shared.icon(forPath: path) {
+            Image(nsImage: image)
                 .resizable()
                 .interpolation(.high)
                 .aspectRatio(contentMode: .fit)
@@ -158,5 +161,21 @@ private struct ActivityRow: View {
                 .font(.system(size: 16, weight: .medium))
                 .foregroundStyle(.secondary)
         }
+    }
+}
+
+/// Symbole je App-Pfad merken: die Liste wird alle 2 s neu gezeichnet, Datei-Abfragen kosten unnötig Zeit.
+@MainActor
+final class AppIconCache {
+    static let shared = AppIconCache()
+    private var icons: [String: NSImage] = [:]
+
+    /// nil, wenn es den Pfad nicht gibt (dann zeigt die Zeile ein neutrales Symbol).
+    func icon(forPath path: String) -> NSImage? {
+        if let cached = icons[path] { return cached }
+        guard FileManager.default.fileExists(atPath: path) else { return nil }
+        let image = NSWorkspace.shared.icon(forFile: path)
+        icons[path] = image
+        return image
     }
 }

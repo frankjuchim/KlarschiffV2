@@ -9,7 +9,7 @@ struct SpotlightCard: View {
 
     static let settingsURL = URL(string: "x-apple.systempreferences:com.apple.Spotlight-Settings.extension")!
 
-    nonisolated static let explanation = "Spotlight durchsucht diese Projektordner mit, obwohl du darin nie etwas suchst – das kostet Rechenzeit und Akku. Schließ sie unter Systemeinstellungen → Spotlight → Datenschutz aus: einfach den Ordner in die Liste ziehen. Klarschiff 2 ändert an deinen Projektordnern nichts."
+    nonisolated static let explanation = "Spotlight durchsucht diese Projektordner mit, obwohl du darin nie etwas suchst – das kostet Rechenzeit und Akku. Schließ sie unter Systemeinstellungen → Spotlight → Datenschutz aus: einfach den Ordner in die Liste ziehen. Ordner, die du dort schon ausgeschlossen hast, können hier trotzdem noch auftauchen – Klarschiff 2 kann diese Liste nicht lesen. Klarschiff 2 ändert an deinen Projektordnern nichts."
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {

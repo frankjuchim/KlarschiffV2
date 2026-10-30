@@ -31,10 +31,21 @@ struct PerformanceTabView: View {
 
     // MARK: - Texte der Kacheln
 
+    /// Ganzzahliger Prozentwert, wie er in der Kachel steht (0…100).
+    nonisolated static func cpuPercent(_ load: Double) -> Int {
+        Int((min(1, max(0, load)) * 100).rounded())
+    }
+
     /// „30 %“; vor der ersten Messung (noch kein Delta) „–“.
     nonisolated static func cpuValueText(load: Double, hasValue: Bool) -> String {
         guard hasValue else { return "–" }
-        return "\(Int((min(1, max(0, load)) * 100).rounded())) %"
+        return "\(cpuPercent(load)) %"
+    }
+
+    /// Wort zur Kachel aus demselben gerundeten Wert, der angezeigt wird („30 %“ heißt nie „kühl“).
+    nonisolated static func cpuWord(load: Double, hasValue: Bool) -> String {
+        guard hasValue else { return " " }
+        return PerformanceWords.cpu(Double(cpuPercent(load)) / 100)
     }
 
     /// Arbeitsspeicher: großer Wert „10,6 GB“, Fußzeile „von 16 GB · entspannt“ (vor der ersten Messung „–“).
@@ -55,6 +66,9 @@ struct PerformanceTabView: View {
 private struct MetricTiles: View {
     let performance: PerformanceModel
 
+    /// Balken „Ausgelagert“: 2 GiB (Grenze „wenig“/„viel“) füllen ihn zur Hälfte, ab 4 GiB ist er voll.
+    static let swapBarHalfBytes: Double = 2_147_483_648
+
     var body: some View {
         let measured = performance.memoryTotal > 0
         let memory = PerformanceTabView.memoryTexts(
@@ -64,10 +78,10 @@ private struct MetricTiles: View {
             MetricTile(
                 title: "Prozessor",
                 value: PerformanceTabView.cpuValueText(load: performance.cpuLoad, hasValue: !performance.cpuHistory.isEmpty),
-                footnote: performance.cpuHistory.isEmpty ? " " : PerformanceWords.cpu(performance.cpuLoad)
+                footnote: PerformanceTabView.cpuWord(load: performance.cpuLoad, hasValue: !performance.cpuHistory.isEmpty)
             ) {
                 Sparkline(values: performance.cpuHistory, maxValue: 1,
-                          color: performance.cpuLoad >= 0.7 ? .orange : Theme.turquoise)
+                          color: PerformanceTabView.cpuPercent(performance.cpuLoad) >= 70 ? .orange : Theme.turquoise)
             }
             MetricTile(title: "Arbeitsspeicher", value: memory.value, footnote: memory.footnote) {
                 FractionBar(
@@ -76,7 +90,7 @@ private struct MetricTiles: View {
             }
             MetricTile(title: "Ausgelagert", value: swap.value, footnote: swap.footnote) {
                 FractionBar(
-                    fraction: Double(performance.swapUsed) / 2_147_483_648 * 0.5,
+                    fraction: Double(performance.swapUsed) / Self.swapBarHalfBytes * 0.5,
                     fill: AnyShapeStyle(Theme.violet))
             }
             UptimeTile(bootTime: performance.bootTime)

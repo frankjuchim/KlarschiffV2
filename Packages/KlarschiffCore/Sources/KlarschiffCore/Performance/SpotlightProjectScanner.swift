@@ -15,13 +15,15 @@ public struct SpotlightCandidate: Sendable, Identifiable {
     }
 }
 
-/// Sucht lesend nach großen Projektordnern (`node_modules`, `.build` …) im Home. Ändert nichts.
+/// Sucht lesend nach großen Projektordnern (`node_modules`, `Pods` …) im Home. Ändert nichts.
 public struct SpotlightProjectScanner: Sendable {
     public static let minimumSize: Int64 = 100_000_000
     public static let maxDepth = 6
 
+    /// Keine Punkt-Ordner (`.build`, `.venv`, `.gradle`): Spotlight indiziert versteckte Ordner ohnehin nicht
+    /// (Entscheidung 30.10.2026).
     private static let plainKinds: Set<String> = [
-        "node_modules", ".build", "Pods", ".venv", "venv", "__pycache__", "DerivedData", ".gradle",
+        "node_modules", "Pods", "venv", "__pycache__", "DerivedData",
     ]
 
     private let sizeOf: (@Sendable (URL) async throws -> Int64)?
@@ -69,6 +71,8 @@ public struct SpotlightProjectScanner: Sendable {
             }
             if name.hasSuffix(".noindex") { continue }
 
+            // Versteckte Ordner indiziert Spotlight nicht – weder melden noch betreten.
+            if name.hasPrefix(".") { continue }
             if let kind = Self.kind(of: name, siblings: names) {
                 // Ausgeschlossene Ordner und Treffer werden nicht betreten.
                 if !fm.fileExists(atPath: entry.appending(path: ".metadata_never_index").path) {
@@ -76,7 +80,7 @@ public struct SpotlightProjectScanner: Sendable {
                 }
                 continue
             }
-            if name.hasPrefix(".") || values?.isPackage == true { continue }
+            if values?.isPackage == true { continue }
             // Einträge von `dir` liegen auf Tiefe depth + 1 (≤ 6); Unterordner nur betreten, solange deren Inhalt ≤ 6 bleibt.
             if depth < Self.maxDepth - 1 {
                 walk(entry, depth: depth + 1, ctx: ctx, deadline: deadline, into: &found)

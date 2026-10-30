@@ -10,9 +10,10 @@ import Foundation
                      pressureLevel: pressure, swapUsed: swap, bootTime: t0)
     }
 
-    func entry(_ id: String = "app", name: String = "Xcode", cpu: Double) -> ActivityEntry {
+    func entry(_ id: String = "app", name: String = "Xcode", cpu: Double,
+               isSystem: Bool = false, canQuit: Bool = true) -> ActivityEntry {
         ActivityEntry(id: id, name: name, appPath: nil, bundleID: nil, processCount: 1, residentBytes: 0,
-                      cpuPercent: cpu, isSystem: false, canQuit: true, quitPID: nil, history: [])
+                      cpuPercent: cpu, isSystem: isSystem, canQuit: canQuit, quitPID: canQuit ? 1 : nil, history: [])
     }
 
     /// Speist Messungen im 10-s-Takt von `from` bis `to` (Sekunden nach t0) ein; liefert die Hinweise der letzten.
@@ -60,7 +61,7 @@ import Foundation
         #expect(feed(&d, 110, 179, pressure: 4).isEmpty)
         let hints = feed(&d, 180, 180, pressure: 2)
         #expect(hints.map(\.id) == ["pressure"])
-        #expect(hints[0].title.contains("Arbeitsspeicher"))
+        #expect(hints[0].title == "Der Arbeitsspeicher ist seit Minuten angespannt")
         feed(&d, 190, 200, pressure: 1)
         #expect(feed(&d, 210, 300, pressure: 2).isEmpty)
     }
@@ -132,5 +133,37 @@ extension SlowdownDetectorTests {
             last = d.update(sample: sample(t, pressure: 4, swap: UInt64(i) * 50_000_000), top: tops, now: t)
         }
         #expect(Set(last.map(\.id)) == ["cpu.a", "cpu.b", "pressure", "swap"])
+    }
+}
+
+extension SlowdownDetectorTests {
+    @Test func cpuHintSuggestsQuittingOnlyWhenQuittable() {
+        let quittable = SlowdownDetector.cpuHint(for: entry(cpu: 95))
+        #expect(quittable.title == "Xcode rechnet seit Minuten stark")
+        #expect(quittable.text.contains("beenden"))
+
+        let system = SlowdownDetector.cpuHint(for: entry(name: "photoanalysisd", cpu: 95, isSystem: true, canQuit: false))
+        #expect(system.title == "photoanalysisd arbeitet seit Minuten viel")
+        #expect(system.text == "Ein Systemdienst ist gerade sehr beschäftigt – das ist meist vorübergehend "
+            + "(zum Beispiel Fotos-Analyse oder Spotlight). Am besten abwarten.")
+        #expect(!system.text.contains("beenden"))
+
+        let other = SlowdownDetector.cpuHint(for: entry(name: "node", cpu: 95, canQuit: false))
+        #expect(other.title == "node arbeitet seit Minuten viel")
+        #expect(!other.text.contains("beenden"))
+        #expect(!other.text.contains("Systemdienst"))
+    }
+
+    @Test func systemEntryHintThroughDetector() {
+        var d = SlowdownDetector()
+        let hints = feed(&d, 0, 180, top: [entry("mds", name: "mds_stores", cpu: 95, isSystem: true, canQuit: false)])
+        #expect(hints.map(\.id) == ["cpu.mds"])
+        #expect(!hints[0].text.contains("beenden"))
+    }
+
+    @Test func pressureTitleUsesTileWords() {
+        var d = SlowdownDetector()
+        let hints = feed(&d, 0, 180, pressure: 4)
+        #expect(hints.first?.title == "Der Arbeitsspeicher ist seit Minuten knapp")
     }
 }

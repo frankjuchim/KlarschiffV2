@@ -8,7 +8,8 @@ struct PerformanceDependencies: Sendable {
     var systemSampler: any SystemSampling
     var processSampler: any ProcessSampling
     var runningApps: @Sendable () -> [RunningAppInfo]
-    /// Bittet die App höflich um das Beenden (nie erzwingen); `expectedBundleID` schützt vor wiederverwendeten PIDs.
+    /// Bittet die App höflich um das Beenden (nie erzwingen); `expectedBundleID` schützt vor wiederverwendeten PIDs –
+    /// ohne Bundle-ID wird nichts beendet.
     var terminate: @Sendable (_ pid: Int32, _ expectedBundleID: String?) async -> Bool
     var spotlightScan: @Sendable () async -> [SpotlightCandidate]
     var sleep: @Sendable (Duration) async throws -> Void
@@ -37,7 +38,7 @@ struct PerformanceDependencies: Sendable {
                 await MainActor.run {
                     guard let app = NSRunningApplication(processIdentifier: pid),
                           app.activationPolicy == .regular,
-                          expected == nil || app.bundleIdentifier == expected else { return false }
+                          let expected, app.bundleIdentifier == expected else { return false }
                     return app.terminate()
                 }
             },
@@ -92,6 +93,10 @@ final class PerformanceModel {
         // Nach Pause frisch beginnen: alte Messstände ergäben falsche Deltas.
         previousSystem = nil
         previousProcesses = nil
+        // Keine veralteten Werte zeigen oder an die Erkennung geben, bis neu gemessen ist.
+        top = []
+        cpuLoad = 0
+        cpuHistory = []
         let sleep = deps.sleep
         task = Task { [weak self] in
             while !Task.isCancelled {
@@ -134,13 +139,16 @@ final class PerformanceModel {
             swapUsed = sys.swapUsed
             bootTime = sys.bootTime
         }
+        var topUpdated = false
         if let prevProcs = previousProcesses {
+            topUpdated = true
             var dt = Self.interval
             if let a = previousSystem?.date, let b = measured.system?.date, b > a { dt = b.timeIntervalSince(a) }
             top = aggregator.update(previous: prevProcs, current: measured.processes, interval: dt, apps: apps)
         }
         if let sys = measured.system {
-            hints = detector.update(sample: sys, top: top, now: now)
+            // Nur frisch gemessene Apps zählen; ohne Delta in diesem Tick gilt keine als beschäftigt.
+            hints = detector.update(sample: sys, top: topUpdated ? top : [], now: now)
             previousSystem = sys
         }
         previousProcesses = measured.processes
@@ -160,8 +168,9 @@ final class PerformanceModel {
 
     // MARK: - Beenden
 
+    /// Nur mit Bundle-ID: sie schützt beim Beenden vor einer inzwischen wiederverwendeten PID.
     func requestQuit(_ e: ActivityEntry) -> Bool {
-        e.canQuit && e.quitPID != nil
+        e.canQuit && e.quitPID != nil && e.bundleID != nil
     }
 
     /// Bittet die App höflich um das Beenden. Trockenlauf beendet nichts. Liefert den Ergebnistext.
