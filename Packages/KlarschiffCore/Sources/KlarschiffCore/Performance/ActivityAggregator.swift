@@ -24,13 +24,19 @@ public struct ActivityEntry: Sendable, Identifiable, Equatable {
     public let cpuPercent: Double
     public let isSystem: Bool
     public let canQuit: Bool
+    /// PID des einen regulären App-Prozesses, den „Beenden“ treffen darf; nil, wenn canQuit false ist.
+    public let quitPID: Int32?
     public let history: [Double]
 }
 
 public struct ActivityAggregator: Sendable {
     public static let historyLimit = 60
     public static let topCount = 12
-    static let protectedBundleIDs: Set<String> = ["de.frankjuchim.klarschiff2", "com.apple.finder"]
+    static var protectedBundleIDs: Set<String> {
+        var ids: Set<String> = ["de.frankjuchim.klarschiff2", "com.apple.finder"]
+        if let own = Bundle.main.bundleIdentifier { ids.insert(own) }
+        return ids
+    }
     static let systemPrefixes = ["/System/", "/usr/libexec/", "/usr/sbin/", "/sbin/"]
 
     private var histories: [String: [Double]] = [:]
@@ -46,7 +52,9 @@ public struct ActivityAggregator: Sendable {
 
     static func isSystemProcess(_ p: ProcessSample, regularApp: Bool = false) -> Bool {
         if p.uid < 500 { return true }   // root und _-Dienstkonten
-        if regularApp { return false }   // z. B. Safari unter /System/Applications
+        // Reguläre Apps unter /System/Applications (z. B. Safari) sind keine Systemdienste,
+        // alles andere unter /System (z. B. CoreServices) schon.
+        if regularApp, p.path?.hasPrefix("/System/Applications/") == true { return false }
         if let path = p.path, systemPrefixes.contains(where: { path.hasPrefix($0) }) { return true }
         return false
     }
@@ -59,7 +67,8 @@ public struct ActivityAggregator: Sendable {
         var ram: UInt64 = 0
         var cpuNs: UInt64 = 0
         var allSystem = true
-        var regular = false
+        var regularInfos: [RunningAppInfo] = []
+        var protected = false
     }
 
     public mutating func update(previous: [ProcessSample], current: [ProcessSample],
@@ -71,15 +80,21 @@ public struct ActivityAggregator: Sendable {
         var groups: [String: Group] = [:]
         for p in current {
             let info = appByPid[p.pid]
-            let appPath = p.path.flatMap(Self.outermostApp) ?? info?.bundlePath
+            // Eine reguläre App bildet ihre eigene Gruppe (z. B. Simulator in Xcode); Helfer ohne
+            // RunningAppInfo gehören zum äußersten .app im Pfad.
+            let appPath: String?
+            if let info, info.isRegular, let bp = info.bundlePath { appPath = bp }
+            else { appPath = p.path.flatMap(Self.outermostApp) ?? info?.bundlePath }
             let id = appPath ?? p.name
             var g = groups[id] ?? Group(
                 name: appPath.map { (($0 as NSString).lastPathComponent as NSString).deletingPathExtension } ?? p.name,
                 appPath: appPath)
             if let info {
                 if g.bundleID == nil { g.bundleID = info.bundleID }
-                if info.isRegular { g.regular = true; g.name = info.name }
+                if info.isRegular { g.regularInfos.append(info) }
+                if let b = info.bundleID, Self.protectedBundleIDs.contains(b) { g.protected = true }
             }
+            if p.pid == getpid() { g.protected = true }
             g.count += 1
             g.ram += p.residentBytes
             if let old = prevByPid[p.pid], old.startTime == p.startTime, p.cpuTimeNs >= old.cpuTimeNs {
@@ -99,16 +114,23 @@ public struct ActivityAggregator: Sendable {
             if h.count > Self.historyLimit { h.removeFirst(h.count - Self.historyLimit) }
             newHistories[id] = h
             let isSystem = g.allSystem
-            let canQuit = g.regular && !isSystem && !(g.bundleID.map(Self.protectedBundleIDs.contains) ?? false)
-            entries.append(ActivityEntry(id: id, name: g.name, appPath: g.appPath, bundleID: g.bundleID,
+            // Genau ein regulärer Prozess, dessen Bundle-Pfad die Gruppe ist; sonst nie beenden.
+            let mains = g.regularInfos.filter { $0.bundlePath == g.appPath }
+            let main = mains.count == 1 ? mains[0] : nil
+            let protected = g.protected || (g.appPath?.hasSuffix("Finder.app") ?? false)
+            let quitPID = (main != nil && !isSystem && !protected) ? main?.pid : nil
+            let name = main?.name ?? g.name
+            let bundleID = main?.bundleID ?? g.bundleID
+            entries.append(ActivityEntry(id: id, name: name, appPath: g.appPath, bundleID: bundleID,
                                          processCount: g.count, residentBytes: g.ram, cpuPercent: cpu,
-                                         isSystem: isSystem, canQuit: canQuit, history: h))
+                                         isSystem: isSystem, canQuit: quitPID != nil, quitPID: quitPID, history: h))
         }
         histories = newHistories   // beendete Apps verlieren ihren Verlauf
         entries.sort {
             if $0.cpuPercent != $1.cpuPercent { return $0.cpuPercent > $1.cpuPercent }
             if $0.residentBytes != $1.residentBytes { return $0.residentBytes > $1.residentBytes }
-            return $0.name < $1.name
+            if $0.name != $1.name { return $0.name < $1.name }
+            return $0.id < $1.id
         }
         return Array(entries.prefix(Self.topCount))
     }

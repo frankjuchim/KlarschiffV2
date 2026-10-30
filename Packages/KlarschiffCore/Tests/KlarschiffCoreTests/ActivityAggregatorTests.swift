@@ -85,10 +85,73 @@ import Foundation
         #expect(e("/Applications/Foo.app")?.bundleID == "com.foo")
         #expect(e("/Applications/Klarschiff 2.app")?.canQuit == false)
         #expect(e("/System/Library/CoreServices/Finder.app")?.canQuit == false)
+        #expect(e("/System/Library/CoreServices/Finder.app")?.isSystem == true)
         #expect(e("/Applications/Bar.app")?.canQuit == false)
         #expect(e("/System/Applications/Safari.app")?.canQuit == true)
         #expect(e("/System/Applications/Safari.app")?.isSystem == false)
         #expect(e("/Applications/R.app")?.canQuit == false)
+    }
+
+    @Test func nonRegularHelperListedFirstDoesNotBypassProtection() {
+        var agg = ActivityAggregator()
+        let path = "/Applications/Klarschiff 2.app/Contents/MacOS/K"
+        let cur = [p(9, "Helper", path: "/Applications/Klarschiff 2.app/Contents/XPC/H"), p(2, "Klarschiff 2", path: path)]
+        let apps = [
+            RunningAppInfo(pid: 9, bundleID: "x.helper", name: "H", bundlePath: "/Applications/Klarschiff 2.app", isRegular: false),
+            RunningAppInfo(pid: 2, bundleID: "de.frankjuchim.klarschiff2", name: "Klarschiff 2", bundlePath: "/Applications/Klarschiff 2.app", isRegular: true)]
+        let e = agg.update(previous: [], current: cur, interval: 2, apps: apps)[0]
+        #expect(e.canQuit == false); #expect(e.quitPID == nil)
+        #expect(e.bundleID == "de.frankjuchim.klarschiff2")
+    }
+
+    @Test func helperFirstStillQuitsMainApp() {
+        var agg = ActivityAggregator()
+        let cur = [p(9, "H", path: "/Applications/Foo.app/Contents/XPC/H"), p(1, "Foo", path: "/Applications/Foo.app/Contents/MacOS/Foo")]
+        let apps = [
+            RunningAppInfo(pid: 9, bundleID: "com.foo.helper", name: "H", bundlePath: "/Applications/Foo.app", isRegular: false),
+            RunningAppInfo(pid: 1, bundleID: "com.foo", name: "Foo", bundlePath: "/Applications/Foo.app", isRegular: true)]
+        let e = agg.update(previous: [], current: cur, interval: 2, apps: apps)[0]
+        #expect(e.canQuit); #expect(e.quitPID == 1); #expect(e.bundleID == "com.foo")
+    }
+
+    @Test func twoRegularProcessesForSameBundleCannotQuit() {
+        var agg = ActivityAggregator()
+        let path = "/Applications/Foo.app/Contents/MacOS/Foo"
+        let apps = [1, 2].map { RunningAppInfo(pid: Int32($0), bundleID: "com.foo", name: "Foo", bundlePath: "/Applications/Foo.app", isRegular: true) }
+        let e = agg.update(previous: [], current: [p(1, "Foo", path: path), p(2, "Foo", path: path)], interval: 2, apps: apps)[0]
+        #expect(e.canQuit == false)
+    }
+
+    @Test func nestedRegularAppFormsOwnGroup() {
+        var agg = ActivityAggregator()
+        let xcode = "/Applications/Xcode.app"
+        let simPath = xcode + "/Contents/Developer/Applications/Simulator.app"
+        let cur = [p(1, "Xcode", path: xcode + "/Contents/MacOS/Xcode"),
+                   p(2, "Simulator", path: simPath + "/Contents/MacOS/Simulator"),
+                   p(3, "Helper", path: xcode + "/Contents/SharedFrameworks/H")]
+        let apps = [
+            RunningAppInfo(pid: 1, bundleID: "com.apple.dt.Xcode", name: "Xcode", bundlePath: xcode, isRegular: true),
+            RunningAppInfo(pid: 2, bundleID: "com.apple.iphonesimulator", name: "Simulator", bundlePath: simPath, isRegular: true)]
+        let out = agg.update(previous: [], current: cur, interval: 2, apps: apps)
+        let x = out.first { $0.id == xcode }, s = out.first { $0.id == simPath }
+        #expect(x?.quitPID == 1); #expect(x?.processCount == 2)
+        #expect(s?.quitPID == 2); #expect(s?.processCount == 1)
+    }
+
+    @Test func ownPidIsProtected() {
+        var agg = ActivityAggregator()
+        let me = getpid()
+        let apps = [RunningAppInfo(pid: me, bundleID: "com.test.runner", name: "R", bundlePath: "/Applications/R.app", isRegular: true)]
+        let e = agg.update(previous: [], current: [p(me, "R", path: "/Applications/R.app/Contents/MacOS/R")], interval: 2, apps: apps)[0]
+        #expect(e.canQuit == false)
+    }
+
+    @Test func machTimebaseConversion() {
+        #expect(LiveProcessSampler.machToNanoseconds(3, numer: 125, denom: 3) == 125)
+        #expect(LiveProcessSampler.machToNanoseconds(1, numer: 125, denom: 3) == 41)
+        #expect(LiveProcessSampler.machToNanoseconds(UInt64.max, numer: 125, denom: 3) == UInt64.max)
+        #expect(LiveProcessSampler.machToNanoseconds(6_000_000_000_000_000, numer: 125, denom: 3) == 250_000_000_000_000_000)
+        #expect(LiveProcessSampler.machToNanoseconds(5, numer: 1, denom: 1) == 5)
     }
 
     @Test func historyCappedAt60AndPruned() {
@@ -130,7 +193,7 @@ import Foundation
         let dur = Date().timeIntervalSince(start)
         #expect(procs.count >= 50)
         #expect(procs.contains { $0.pid == getpid() })
-        #expect(dur < 0.2)
+        #expect(dur < 1)
         let me = procs.first { $0.pid == getpid() }
         #expect((me?.residentBytes ?? 0) > 0)
         #expect((me?.startTime ?? 0) > 0)

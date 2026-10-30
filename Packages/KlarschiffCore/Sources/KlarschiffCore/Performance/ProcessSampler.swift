@@ -28,6 +28,14 @@ public protocol ProcessSampling: Sendable {
 public struct LiveProcessSampler: ProcessSampling {
     public init() {}
 
+    /// Mach-Absolutzeit -> Nanosekunden (Apple Silicon: 125/3), ohne Überlauf.
+    static func machToNanoseconds(_ ticks: UInt64, numer: UInt64, denom: UInt64) -> UInt64 {
+        let r = UInt128(ticks) * UInt128(numer) / UInt128(max(denom, 1))
+        return r > UInt128(UInt64.max) ? UInt64.max : UInt64(r)
+    }
+
+    /// PID 0 (Kernel) wird übersprungen. Ist `proc_bsdinfo` nicht lesbar, ist `startTime` 0 (dann gibt es
+    /// keine PID-Wiederverwendungsprüfung über Zeit, aber auch keine CPU-Daten) und `uid` 0.
     public func sample() -> [ProcessSample] {
         // proc_listallpids liefert die ANZAHL der PIDs, nicht Bytes.
         let estimate = proc_listallpids(nil, 0)
@@ -75,7 +83,7 @@ public struct LiveProcessSampler: ProcessSampling {
             if taskOK {
                 // Auf Apple Silicon sind die Zeiten Mach-Absolutzeit: in Nanosekunden umrechnen.
                 let ticks = task.pti_total_user &+ task.pti_total_system
-                cpu = (ticks / denom) &* numer &+ (ticks % denom) &* numer / denom
+                cpu = Self.machToNanoseconds(ticks, numer: numer, denom: denom)
                 resident = task.pti_resident_size
             }
             // Speicher wie die Aktivitätsanzeige (phys_footprint), sonst Resident Size.
