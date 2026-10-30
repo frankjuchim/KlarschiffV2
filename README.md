@@ -64,6 +64,14 @@ Der Tab „Hintergrunddienste“ listet LaunchAgents und -Daemons (ohne Apple) a
 entfernen (Benutzerdienste per `launchctl bootout` und Papierkorb, Einträge unter `/Library` mit einer Passwortabfrage);
 alle anderen Dienste und Anmeldeobjekte werden nur erklärt. Livetest: `KLARSCHIFF_LIVE_SCAN=1 swift test --package-path Packages/KlarschiffCore --filter liveServices`.
 
+## Leistung
+
+Der Tab „Leistung“ zeigt live Prozessor, Arbeitsspeicher (mit Speicherdruck), Auslagerung und Laufzeit in Kacheln
+und darunter die zwölf aktivsten Apps (Prozesse gebündelt, RAM, CPU mit Verlauf). Reguläre Apps lassen sich mit
+„Beenden“ freundlich schließen (nie Finder, Klarschiff 2 oder Systemdienste). Dazu erkennt er Bremser und schlägt große
+Projektordner (`node_modules`, `.build` …) vor, die Spotlight unnötig durchsucht. Alles lesend, nichts passiert automatisch.
+Livetest: `KLARSCHIFF_LIVE_SCAN=1 swift test --package-path Packages/KlarschiffCore --filter livePerformance`.
+
 ## Trockenlauf
 
 Im Trockenlauf läuft alles wie gewohnt, es wird aber nichts entfernt. Er ist aktiv, wenn die App mit dem

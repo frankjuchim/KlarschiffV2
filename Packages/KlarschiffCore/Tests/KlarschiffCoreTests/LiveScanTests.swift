@@ -150,6 +150,57 @@ struct LiveScanTests {
         }
     }
 
+    @Test(.enabled(if: liveEnabled), .timeLimit(.minutes(3)))
+    func livePerformanceWritesSummary() async throws {
+        let env = ProcessInfo.processInfo.environment
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let cache = try #require(SafetyGuard.userCacheDirectory())
+        let ctx = ScanContext(
+            home: home, userCacheDir: cache, rootPrefix: URL(filePath: "/"), runner: ProcessCommandRunner(),
+            tools: .standard, sizer: SizeMeter(), runningApps: WorkspaceRunningApps(), claims: PathClaims(),
+            now: Date(), hasFullDiskAccess: FullDiskAccess.isGranted(home: home), includeSlowChecks: false)
+
+        let sys = LiveSystemSampler(), procs = LiveProcessSampler()
+        let sampleStart = Date()
+        let s1 = try #require(sys.sample()), p1 = procs.sample()
+        try await Task.sleep(for: .seconds(2))
+        let s2 = try #require(sys.sample()), p2 = procs.sample()
+        var aggregator = ActivityAggregator()
+        // Ohne App-Liste (Core kennt kein NSWorkspace): Gruppierung nur über Bundle-Pfade.
+        let top = aggregator.update(previous: p1, current: p2, interval: s2.date.timeIntervalSince(s1.date), apps: [])
+        let sampleSeconds = Date().timeIntervalSince(sampleStart)
+
+        let spotStart = Date()
+        let candidates = await SpotlightProjectScanner().scan(ctx)
+        let spotSeconds = Date().timeIntervalSince(spotStart)
+
+        func tilde(_ u: URL) -> String { u.path.replacingOccurrences(of: home.path, with: "~") }
+        let load = PerformanceMath.cpuLoad(s1.cpu, s2.cpu)
+        let up = PerformanceWords.uptime(since: s2.bootTime, now: s2.date)
+        var md = "# Live-Messung Leistung (nur lesend)\n\n"
+        md += "Voller Festplattenzugriff: \(ctx.hasFullDiskAccess ? "ja" : "nein"), Messdauer: \(String(format: "%.1f", sampleSeconds)) s, Spotlight-Suche: \(String(format: "%.1f", spotSeconds)) s\n\n"
+        md += "## Systemwerte\n\n"
+        md += "- Prozessor: \(String(format: "%.0f", load * 100)) % (\(PerformanceWords.cpu(load)))\n"
+        md += "- Arbeitsspeicher: \(ByteFormat.memoryString(Int64(s2.memoryUsed))) von \(ByteFormat.memoryString(Int64(s2.memoryTotal)))\n"
+        md += "- Speicherdruck: \(PerformanceWords.memory(pressure: s2.pressureLevel)) (Stufe \(s2.pressureLevel))\n"
+        md += "- Auslagerung: \(ByteFormat.memoryString(Int64(s2.swapUsed))) (\(PerformanceWords.swap(s2.swapUsed)))\n"
+        md += "- Laufzeit: \(up.value) (\(up.word))\n"
+        md += "- Prozesse gesamt: \(p2.count)\n\n"
+        md += "## Top \(ActivityAggregator.topCount)\n\n| Name | Prozesse | RAM | CPU % | System |\n|---|---|---|---|---|\n"
+        for e in top {
+            md += "| \(e.name.replacingOccurrences(of: "|", with: "/")) | \(e.processCount) | \(ByteFormat.memoryString(Int64(e.residentBytes))) | \(String(format: "%.1f", e.cpuPercent)) | \(e.isSystem ? "ja" : "nein") |\n"
+        }
+        md += "\n## Spotlight-Kandidaten\n\nAnzahl: \(candidates.count)\n\n| Art | Ordner | Größe |\n|---|---|---|\n"
+        for c in candidates {
+            md += "| \(c.kind) | \(tilde(c.url)) | \(ByteFormat.string(c.size)) |\n"
+        }
+        if let out = env["KLARSCHIFF_LIVE_SCAN_OUT"] {
+            try md.write(toFile: out, atomically: true, encoding: .utf8)
+        } else {
+            print(md)
+        }
+    }
+
     private static func kind(_ m: RemovalMethod) -> String {
         switch m {
         case .trash: "trash"

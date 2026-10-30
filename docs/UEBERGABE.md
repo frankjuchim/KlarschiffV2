@@ -66,11 +66,33 @@
 - Anmeldeobjekte: nur BTM-Typ „login item“; „app“-Einträge dienen nur der Namensauflösung. Andere BTM-Typen (z. B. Agent/Daemon über `SMAppService`) erscheinen nicht als Anmeldeobjekt.
 - Apple-Dienste ohne `com.apple.`-Präfix gelten nicht als Apple-Dienste durch das Präfix, sind aber geschützt (nie als entfernbar angeboten).
 
+## Stand Teilprojekt 5 – Leistung (30.10.2026)
+- Tab „Leistung“: Kacheln für Prozessor, Arbeitsspeicher (mit Speicherdruck), Auslagerung und Laufzeit, Top-12-Liste der Apps (Prozesse gebündelt, RAM, CPU mit Verlauf), „Beenden“ für reguläre Apps (nie Finder, Klarschiff 2 oder Systemdienste), Hinweise auf Bremser und eine Spotlight-Karte mit großen Projektordnern (`node_modules`, `.build` …). Alles lesend, nichts wird automatisch beendet oder verändert.
+- Lese-Messung auf Franks Mac: CPU 45 %, Speicher 11,66 GB von 16 GB (Druck entspannt), Auslagerung 1,5 GB, 823 Prozesse, 2 Spotlight-Kandidaten (je über 200 MB). Details: Abnahme-Abschnitt „Teilprojekt 5“. Opt-in-Livetest `livePerformanceWritesSummary` (`KLARSCHIFF_LIVE_SCAN=1`).
+
+### Offen für Frank (TP5)
+- [ ] Kacheln mit der Aktivitätsanzeige vergleichen (±10 %).
+- [ ] Tab in `--dry-run` ansehen; „Beenden“ im Trockenlauf, dann echt mit TextEdit testen.
+- [ ] Spotlight-Karte und Finder-Lupe prüfen; Einstellungen-Button testen.
+
+## Alles fertig – offene Punkte gesammelt
+Alle fünf Teilprojekte sind umgesetzt. Was nur mit dir am Mac geht:
+- [ ] **Oberfläche in `--dry-run`** durchsehen: alle Tabs (Aufräumen, Systemdaten, Hintergrunddienste, Leistung) und Einstellungen.
+- [ ] **Echter kleiner Lauf** (TP1): Homebrew aufräumen plus ein Papierkorb-Fund, App aus dem Finder gestartet.
+- [ ] **Admin-Schritte** echt ausführen (TP1/TP2): ein Systemfund, genau eine Passwortabfrage, „Ich habe verstanden“ schaltet den Button frei. Ebenso das echte Entfernen von Diensten unter `/Library` (TP4, Admin) und eines verwaisten Benutzer-Agents (ggf. Dummy).
+- [ ] **Signierte App**: LaunchAgent des Checks registrieren (Wöchentlich, Anmeldeobjekte erlauben, Mitteilungen zulassen), „Jetzt prüfen“, alte Automatik entfernen (`launchctl list` prüfen), alte App Klarschiff 1 entfernen (TP3).
+- [ ] **Datenschutzabfragen (TCC)** beobachten: Docker, UTM, Telegram, OrbStack und beim ersten Hintergrund-Check; Telegram-Muster mit vollem Festplattenzugriff verifizieren (TP1/TP3).
+- [ ] **Voller Festplattenzugriff** (TP2): Systemdaten erneut messen, Ziel mindestens 90 % zugeordnet (zuletzt 75,0 %); iCloud-Ordner `~/Library/Mobile Documents` braucht evtl. längere Frist.
+- [ ] **Anmeldeobjekte** (TP4): `sfltool dumpbtm` lieferte in der Agent-Sitzung auch nach über 2 Minuten nichts; der Reader bricht nach 20 s Zeitlimit ab und meldet „nicht lesbar“. In der echten App prüfen, ob die Liste erscheint.
+- [ ] **Leistung** (TP5): Kacheln gegen Aktivitätsanzeige (±10 %), „Beenden“ mit TextEdit, Spotlight-Karte, Finder-Lupe, Einstellungen-Button.
+- [ ] **Release**: `scripts/release.sh` samt Notarisierung einmal mit echtem Team und Profil durchlaufen lassen.
+- [ ] Echte `softwareupdate -l`-Ausgabe festhalten, sobald ein Update ansteht (TP1).
+
 ## Startnachricht für die Sitzung auf dem Mac
-> Lies CLAUDE.md und docs/UEBERGABE.md. Setze den Plan docs/superpowers/plans/2026-10-29-klarschiff2-teilprojekt1.md mit superpowers:subagent-driven-development um, beginnend bei Task 1. Branch: claude/intelligent-galileo-8ok14a. Nach jedem Task committen und pushen.
+> Alle Teilprojekte (1–5) sind umgesetzt. Lies CLAUDE.md und docs/UEBERGABE.md, Abschnitt „Alles fertig – offene Punkte gesammelt“, und arbeite die offenen Punkte gemeinsam mit Frank ab. Branch: claude/intelligent-galileo-8ok14a.
 
 ## Danach
-Teilprojekte 3–5 (Automatischer Check + Migration alter Agents, Hintergrunddienste, Leistung) jeweils mit eigenem Brainstorming → Spec → Plan. Offene Fragen dafür: Menüleisten-Icon ja/nein, Schwellen des Wachstumswächters.
+Offene Ideen (jeweils mit eigenem Brainstorming → Spec → Plan): Menüleisten-Icon ja/nein, Schwellen des Wachstumswächters.
 
 ## Bekannte Abweichungen Teilprojekt 2
 - `log erase`: Bei Exit ≠ 0 zeigt die Entfernung nur „Exit N“ statt gekürzter stderr (Spec §7), weil der `PrivilegedExecutor` nur Exit-Codes liefert; nachrüstbar, wenn er Ausgaben durchreicht.
